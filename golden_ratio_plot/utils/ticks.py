@@ -58,19 +58,24 @@ def nice_range(
 ) -> tuple[float, float, List[float]]:
     """Return ``(axis_min, axis_max, ticks)`` with a golden-ratio top padding.
 
-    The top of the axis is padded by ``top_padding_intervals`` tick intervals
-    above the topmost tick that covers ``data_max``.
+    ``axis_max`` is set to ``data_max + top_padding_intervals × tick_step``.
+    Any tick that lies above ``axis_max`` is dropped so the space above the
+    tallest bar stays minimal.  The previous behaviour of padding above the
+    last nice tick caused excessive dead space when the last tick was already
+    well above data_max.
 
     Parameters
     ----------
     top_padding_intervals:
-        Fraction of one tick interval added above the highest tick.
+        Fraction of one tick interval added above ``data_max``.
         Default is ``0.618`` (golden ratio).
     """
     ticks = nice_ticks(data_min, data_max, n)
     tick_step = ticks[1] - ticks[0] if len(ticks) >= 2 else 1.0
     axis_min = ticks[0]
-    axis_max = ticks[-1] + tick_step * top_padding_intervals
+    axis_max = data_max + tick_step * top_padding_intervals
+    # Keep only ticks that fall within the visible range.
+    ticks = [t for t in ticks if t <= axis_max + tick_step * 1e-9]
     return axis_min, axis_max, ticks
 
 

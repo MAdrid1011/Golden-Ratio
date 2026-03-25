@@ -87,7 +87,9 @@ class AblationRenderer(BaseRenderer):
 
         # ── Y-axis range & ticks ──────────────────────────────────────────────
         all_values = data.all_values()
-        data_min = cfg.y_min if cfg.y_min is not None else min(all_values)
+        # Bar charts should start at 0 by default so bar heights are truthful.
+        # Override with --y_min if a different baseline is needed.
+        data_min = cfg.y_min if cfg.y_min is not None else 0.0
         data_max = cfg.y_max if cfg.y_max is not None else max(all_values)
 
         # Extra padding when values are shown (need room above bar for the text)
