@@ -132,9 +132,9 @@ class AblationRenderer(BaseRenderer):
             )
 
         # ── Axis labels ───────────────────────────────────────────────────────
-        # X-axis: group names on the tick labels are self-explanatory;
-        # the axis title is intentionally omitted for ablation charts.
-        ax.set_ylabel(cfg.y_axis_label, fontsize=cfg.font_size_pt)
+        # Y-axis label comes directly from the CSV value-column header.
+        # X-axis title is omitted; group names on tick labels are self-explanatory.
+        ax.set_ylabel(data.value_label, fontsize=cfg.font_size_pt)
 
         # ── Legend (horizontal strip above the top spine) ─────────────────────
         color_labels = list(data.labels)

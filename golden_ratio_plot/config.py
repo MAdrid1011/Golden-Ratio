@@ -25,10 +25,9 @@ class PlotConfig:
     formats: List[str] = field(default_factory=lambda: ["pdf", "png"])
 
     # ── Axis labels ──────────────────────────────────────────────────────────
+    # Y-axis label is read directly from the CSV value-column header.
     x_label: str = "Configuration"
     x_unit: Optional[str] = None          # omit if unit is meaningless
-    y_label: str = "Value"
-    y_unit: Optional[str] = None
 
     # ── Figure dimensions ────────────────────────────────────────────────────
     width_pt: float = 240.0               # ACM single-column max
@@ -71,14 +70,6 @@ class PlotConfig:
     @property
     def x_axis_label(self) -> str:
         """Formatted axis label: 'Name (unit)' or just 'Name'."""
-        return _format_label(self.x_label, self.x_unit)
-
-    @property
-    def y_axis_label(self) -> str:
-        return _format_label(self.y_label, self.y_unit)
-
-
-def _format_label(name: str, unit: Optional[str]) -> str:
-    if unit:
-        return f"{name} ({unit})"
-    return name
+        if self.x_unit:
+            return f"{self.x_label} ({self.x_unit})"
+        return self.x_label

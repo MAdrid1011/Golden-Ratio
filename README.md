@@ -24,9 +24,6 @@ pip install -r requirements.txt
 python main.py \
   --input  examples/ablation_example.csv \
   --output out/fig1 \
-  --mode   ablation \
-  --y_label "Accuracy" \
-  --y_unit  "%" \
   --show_values
 ```
 
@@ -44,8 +41,6 @@ This produces `out/fig1.pdf` **and** `out/fig1.png` in one run.
 | `--mode` | `ablation` | Chart mode — currently only `ablation` |
 | `--x_label` | `Configuration` | X-axis variable name (displayed on tick labels; no axis title is shown) |
 | `--x_unit` | *(none)* | X-axis unit — omit if the unit is not meaningful (e.g. "个") |
-| `--y_label` | `Value` | Y-axis variable name |
-| `--y_unit` | *(none)* | Y-axis unit (e.g. `%`) |
 | `--width_pt` | `240` | Figure width in typographic points (ACM single-column max = 240 pt) |
 | `--height_pt` | *(auto)* | Figure height in pt — defaults to `width × 0.618` (golden rectangle) |
 | `--font_size_pt` | `7` | Base font size in pt (ACM minimum = 7 pt) |
@@ -65,7 +60,7 @@ This produces `out/fig1.pdf` **and** `out/fig1.png` in one run.
 Three columns are required, in any order:
 
 ```csv
-group,label,value
+group,label,Accuracy (%)
 Baseline,w/o Attn,82.3
 Baseline,w/o Norm,85.1
 Baseline,Full,91.4
@@ -81,7 +76,7 @@ Decoder,Full,87.6
 |--------|-------------|
 | `group` | Ablation group name — shown as the x-axis tick label |
 | `label` | Variant name within the group — must be **consistent across all groups**; determines legend entries and bar colors |
-| `value` | Numeric measurement |
+| *(any name)* | Numeric measurement — the column header is used verbatim as the y-axis label. Write the unit directly in the header when needed, e.g. `Accuracy (%)`, `Speedup (×)`, `F1 Score`. |
 
 **Rules**
 

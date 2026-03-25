@@ -1,4 +1,4 @@
-group,label,value
+group,label,Accuracy (%)
 Baseline,w/o Attn,82.3
 Baseline,w/o Norm,85.1
 Baseline,Full,91.4

@@ -4,12 +4,12 @@
 Usage
 -----
     python main.py --input examples/ablation_example.csv \\
-                   --output out/fig1.pdf \\
+                   --output out/fig1 \\
                    --mode ablation \\
-                   --x_label "Configuration" \\
-                   --y_label "Accuracy" \\
-                   --y_unit "%" \\
                    --show_values
+
+The y-axis label is taken directly from the CSV value-column header.
+Write the unit into the header when needed, e.g. ``Accuracy (%)``.
 """
 
 from __future__ import annotations
@@ -44,13 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── Axis labels ──────────────────────────────────────────────────────────
     p.add_argument("--x_label", default="Configuration",
-                   help="X-axis variable name.")
+                   help="X-axis variable name (shown as tick labels).")
     p.add_argument("--x_unit", default=None,
                    help="X-axis unit (omit if not meaningful).")
-    p.add_argument("--y_label", default="Value",
-                   help="Y-axis variable name.")
-    p.add_argument("--y_unit", default=None,
-                   help="Y-axis unit (e.g. '%').")
+    # Y-axis label is read from the CSV value-column header; no CLI arg needed.
 
     # ── Figure size ───────────────────────────────────────────────────────────
     p.add_argument("--width_pt", type=float, default=240.0,
@@ -97,8 +94,6 @@ def main(argv: list[str] | None = None) -> int:
         mode=args.mode,
         x_label=args.x_label,
         x_unit=args.x_unit,
-        y_label=args.y_label,
-        y_unit=args.y_unit,
         width_pt=args.width_pt,
         height_pt=args.height_pt,
         font_size_pt=args.font_size_pt,
