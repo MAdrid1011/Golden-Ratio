@@ -28,6 +28,8 @@ python main.py \
 ```
 
 This produces `out/fig1.pdf` **and** `out/fig1.png` in one run.
+Both axis labels come from the CSV: the y-axis uses the value-column header (e.g. `Accuracy (%)`),
+the x-axis uses the `group` column values as tick labels. No separate label flags are needed.
 
 ---
 
@@ -39,8 +41,6 @@ This produces `out/fig1.pdf` **and** `out/fig1.png` in one run.
 | `--output` | `out/figure` | Output base path — no extension needed |
 | `--formats` | `pdf png` | Space-separated list of output formats (`pdf`, `png`, `svg`, `eps`) |
 | `--mode` | `ablation` | Chart mode — currently only `ablation` |
-| `--x_label` | `Configuration` | X-axis variable name (displayed on tick labels; no axis title is shown) |
-| `--x_unit` | *(none)* | X-axis unit — omit if the unit is not meaningful (e.g. "个") |
 | `--width_pt` | `240` | Figure width in typographic points (ACM single-column max = 240 pt) |
 | `--height_pt` | *(auto)* | Figure height in pt — defaults to `width × 0.618` (golden rectangle) |
 | `--font_size_pt` | `7` | Base font size in pt (ACM minimum = 7 pt) |

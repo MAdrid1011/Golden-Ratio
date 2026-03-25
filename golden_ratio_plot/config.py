@@ -24,10 +24,9 @@ class PlotConfig:
     # Output formats to produce in a single run.  Any of: pdf, png, svg, eps.
     formats: List[str] = field(default_factory=lambda: ["pdf", "png"])
 
-    # ── Axis labels ──────────────────────────────────────────────────────────
-    # Y-axis label is read directly from the CSV value-column header.
-    x_label: str = "Configuration"
-    x_unit: Optional[str] = None          # omit if unit is meaningless
+    # Y-axis label is read from the CSV value-column header.
+    # X-axis group names are read from the CSV 'group' column.
+    # No separate label/unit fields are needed for either axis.
 
     # ── Figure dimensions ────────────────────────────────────────────────────
     width_pt: float = 240.0               # ACM single-column max
@@ -67,9 +66,3 @@ class PlotConfig:
             return self.height_pt / PT_PER_INCH
         return self.width_in * (1.0 / PHI)   # golden rectangle
 
-    @property
-    def x_axis_label(self) -> str:
-        """Formatted axis label: 'Name (unit)' or just 'Name'."""
-        if self.x_unit:
-            return f"{self.x_label} ({self.x_unit})"
-        return self.x_label

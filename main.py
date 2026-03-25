@@ -42,12 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mode", default="ablation", choices=_MODES,
                    help="Chart mode.")
 
-    # ── Axis labels ──────────────────────────────────────────────────────────
-    p.add_argument("--x_label", default="Configuration",
-                   help="X-axis variable name (shown as tick labels).")
-    p.add_argument("--x_unit", default=None,
-                   help="X-axis unit (omit if not meaningful).")
-    # Y-axis label is read from the CSV value-column header; no CLI arg needed.
+    # Both axis labels come from the CSV:
+    #   y-axis → value-column header (e.g. "Accuracy (%)")
+    #   x-axis → 'group' column values shown as tick labels
 
     # ── Figure size ───────────────────────────────────────────────────────────
     p.add_argument("--width_pt", type=float, default=240.0,
@@ -92,8 +89,6 @@ def main(argv: list[str] | None = None) -> int:
         output=args.output,
         formats=args.formats,
         mode=args.mode,
-        x_label=args.x_label,
-        x_unit=args.x_unit,
         width_pt=args.width_pt,
         height_pt=args.height_pt,
         font_size_pt=args.font_size_pt,
