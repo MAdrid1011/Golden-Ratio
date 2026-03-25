@@ -1,0 +1,10 @@
+group,label,value
+Baseline,w/o Attn,82.3
+Baseline,w/o Norm,85.1
+Baseline,Full,91.4
+Encoder,w/o Attn,80.7
+Encoder,w/o Norm,83.9
+Encoder,Full,89.2
+Decoder,w/o Attn,78.5
+Decoder,w/o Norm,81.0
+Decoder,Full,87.6
