@@ -6,6 +6,10 @@ from typing import List, Optional
 PHI = 1.6180339887  # golden ratio
 PT_PER_INCH = 72.0
 
+# Default figure height = single-column width × (1/φ).
+# Wide figures (e.g. double-column) share this same height so they stay compact.
+_DEFAULT_HEIGHT_PT = 240.0 / PHI   # ≈ 148.3 pt
+
 
 @dataclass
 class PlotConfig:
@@ -30,12 +34,24 @@ class PlotConfig:
 
     # ── Figure dimensions ────────────────────────────────────────────────────
     width_pt: float = 240.0               # ACM single-column max
-    # Height defaults to width × 0.618 (golden rectangle); set explicitly to override.
+    # Height defaults to 240 × (1/φ) ≈ 148 pt for all widths.
+    # Single-column (240 pt) therefore keeps the golden rectangle.
+    # Wider figures (e.g. 540 pt double-column) stay at the same compact height.
+    # Set explicitly to override.
     height_pt: Optional[float] = None
 
     # ── Typography ───────────────────────────────────────────────────────────
-    font_size_pt: float = 7.0             # minimum 7pt per ACM rules
+    font_size_pt: float = 7.0             # tick labels and legend — ACM minimum
     font_family: str = "Times New Roman"
+    # Axis label font size (y-axis title, x-axis group names).
+    # None → font_size_pt + 2 (a visible but modest step up).
+    label_font_size_pt: Optional[float] = None
+
+    @property
+    def label_font_size(self) -> float:
+        if self.label_font_size_pt is not None:
+            return self.label_font_size_pt
+        return self.font_size_pt + 2.0
 
     # ── Y-axis ───────────────────────────────────────────────────────────────
     y_ticks: int = 5                      # target number of y-axis ticks
@@ -64,5 +80,5 @@ class PlotConfig:
     def height_in(self) -> float:
         if self.height_pt is not None:
             return self.height_pt / PT_PER_INCH
-        return self.width_in * (1.0 / PHI)   # golden rectangle
+        return _DEFAULT_HEIGHT_PT / PT_PER_INCH  # fixed ≈ 148 pt for all widths
 

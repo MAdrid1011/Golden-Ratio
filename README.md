@@ -21,15 +21,22 @@ pip install -r requirements.txt
 ## Quick Start
 
 ```bash
+# Single-column figure (240 pt wide, default)
 python main.py \
-  --input  examples/ablation_example.csv \
-  --output out/fig1 \
-  --show_values
+  --input  examples/ablation_example_single.csv \
+  --output out/fig_single
+
+# Double-column figure (540 pt wide)
+python main.py \
+  --input    examples/ablation_example_double.csv \
+  --output   out/fig_double \
+  --width_pt 540
 ```
 
-This produces `out/fig1.pdf` **and** `out/fig1.png` in one run.
-Both axis labels come from the CSV: the y-axis uses the value-column header (e.g. `Accuracy (%)`),
-the x-axis uses the `group` column values as tick labels. No separate label flags are needed.
+Each run produces both a PDF and a PNG. Both axis labels come from the CSV:
+the y-axis title uses the value-column header (e.g. `Accuracy (%)`), and
+the x-axis uses the `group` column values as tick labels. No separate label
+flags are needed.
 
 ---
 
@@ -41,11 +48,12 @@ the x-axis uses the `group` column values as tick labels. No separate label flag
 | `--output` | `out/figure` | Output base path — no extension needed |
 | `--formats` | `pdf png` | Space-separated list of output formats (`pdf`, `png`, `svg`, `eps`) |
 | `--mode` | `ablation` | Chart mode — currently only `ablation` |
-| `--width_pt` | `240` | Figure width in typographic points (ACM single-column max = 240 pt) |
-| `--height_pt` | *(auto)* | Figure height in pt — defaults to `width × 0.618` (golden rectangle) |
-| `--font_size_pt` | `7` | Base font size in pt (ACM minimum = 7 pt) |
+| `--width_pt` | `240` | Figure width in typographic points (ACM single-column = 240 pt, double-column = 540 pt) |
+| `--height_pt` | *(auto)* | Figure height in pt — defaults to `240 × (1/φ) ≈ 148 pt` for **all** widths; single-column therefore keeps the golden rectangle, wider figures stay compact |
+| `--font_size_pt` | `7` | Tick-label and legend font size in pt (ACM minimum = 7 pt) |
+| `--label_font_size_pt` | *(auto)* | Axis-label font size in pt (y-axis title, x-axis group names) — defaults to `font_size_pt + 2` |
 | `--y_ticks` | `5` | Target number of y-axis ticks |
-| `--y_min` | *(auto)* | Override y-axis lower bound |
+| `--y_min` | *(auto)* | Override y-axis lower bound (default: 0 for bar charts) |
 | `--y_max` | *(auto)* | Override y-axis upper bound |
 | `--show_values` | off | Print numeric value above each bar |
 | `--palette_hue` | `210` | Base hue (0–360) for the auto-generated color palette |
@@ -74,7 +82,7 @@ Decoder,Full,87.6
 
 | Column | Description |
 |--------|-------------|
-| `group` | Ablation group name — shown as the x-axis tick label |
+| `group` | Ablation group name — shown as the x-axis tick label. Use spaces as word separators (not underscores) so long names can be word-wrapped across two lines. |
 | `label` | Variant name within the group — must be **consistent across all groups**; determines legend entries and bar colors |
 | *(any name)* | Numeric measurement — the column header is used verbatim as the y-axis label. Write the unit directly in the header when needed, e.g. `Accuracy (%)`, `Speedup (×)`, `F1 Score`. |
 
@@ -82,7 +90,8 @@ Decoder,Full,87.6
 
 - Every `(group, label)` pair must be unique.
 - The order rows appear in the CSV determines the display order of groups and labels.
-- If any group name exceeds 12 characters, all group labels are replaced with `(1)`, `(2)`, … on the x-axis and the mapping is appended to the legend.
+- Group names are word-wrapped adaptively: the maximum characters per line is computed from the available horizontal space and font size. Names that fit on one line are displayed as-is; longer names are split at the best word boundary into two lines. If no valid split exists, all group labels fall back to `(1)`, `(2)`, … with a mapping appended to the legend.
+- When some group names are two lines and others are one line, the one-line labels are vertically centred in the same two-line cell.
 
 ---
 
@@ -101,10 +110,10 @@ Decoder,Full,87.6
 
 | Element | Rule |
 |---------|------|
-| Figure aspect ratio | `height = width × 0.618` (golden rectangle) |
+| Figure height (default) | Fixed at `240 × (1/φ) ≈ 148 pt` — single-column keeps the golden rectangle; wider figures stay compact at the same height |
 | Bar spacing — two-level hierarchy | boundary→bar edge : inner gap : bar width = `φ/2 : 1/φ : 1` ≈ `0.809 : 0.618 : 1`; all boundaries (spines and separators) are equidistant from their nearest bar |
 | Inter-group gap (edge to edge) | `φ × bar_width ≈ 1.618` — gives total outer gap : inner gap = `φ² : 1` |
-| Y-axis top padding | `0.618 × one tick interval` above the highest tick |
+| Y-axis top margin | Fixed 5 pt above the tallest bar (or above the value label if `--show_values`) |
 | Color darkening | Geometric series with ratio `0.618`; lightness steps are denser at the dark end |
 | Legend internals | swatch side = `fs × 1.0`; swatch→text gap = `fs × 0.618`; row height = `fs × 1.618` |
 
@@ -127,7 +136,8 @@ Golden-Ratio/
 │       ├── colors.py           # φ-geometric HSL palette generator
 │       └── ticks.py            # nice_ticks() / nice_range()
 ├── examples/
-│   └── ablation_example.csv    # Sample input
+│   ├── ablation_example_single.csv   # Single-column sample (240 pt)
+│   └── ablation_example_double.csv   # Double-column sample (540 pt)
 ├── main.py                     # CLI entry point (argparse)
 ├── requirements.txt
 └── README.md

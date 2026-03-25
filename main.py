@@ -3,10 +3,8 @@
 
 Usage
 -----
-    python main.py --input examples/ablation_example.csv \\
-                   --output out/fig1 \\
-                   --mode ablation \\
-                   --show_values
+    python main.py --input examples/ablation_example_single.csv --output out/fig_single
+    python main.py --input examples/ablation_example_double.csv --output out/fig_double --width_pt 540
 
 The y-axis label is taken directly from the CSV value-column header.
 Write the unit into the header when needed, e.g. ``Accuracy (%)``.
@@ -64,7 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--show_values", action="store_true",
                    help="Print numeric values on top of each bar.")
     p.add_argument("--font_size_pt", type=float, default=7.0,
-                   help="Base font size in pt (must be ≥ 7 for ACM compliance).")
+                   help="Tick-label and legend font size in pt (ACM minimum: 7).")
+    p.add_argument("--label_font_size_pt", type=float, default=None,
+                   help="Axis-label font size in pt (default: font_size_pt + 2).")
 
     # ── Color ─────────────────────────────────────────────────────────────────
     p.add_argument("--palette_hue", type=float, default=210.0,
@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         width_pt=args.width_pt,
         height_pt=args.height_pt,
         font_size_pt=args.font_size_pt,
+        label_font_size_pt=args.label_font_size_pt,
         y_ticks=args.y_ticks,
         y_min=args.y_min,
         y_max=args.y_max,
