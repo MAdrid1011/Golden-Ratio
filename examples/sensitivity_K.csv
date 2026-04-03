@@ -1,0 +1,10 @@
+group,x,Accuracy (%),FPS
+__caption__,,(a) Effect of K,
+Method A,1,81.2,28.4
+Method A,2,84.7,25.1
+Method A,4,87.3,21.6
+Method A,8,86.5,17.8
+Method B,1,78.5,30.2
+Method B,2,82.1,27.0
+Method B,4,85.0,23.4
+Method B,8,84.2,19.1

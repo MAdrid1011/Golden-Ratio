@@ -16,10 +16,11 @@ import argparse
 import sys
 
 from golden_ratio_plot.config import PlotConfig
-from golden_ratio_plot.reader import read_csv
+from golden_ratio_plot.reader import read_csv, read_sensitivity_csv
 from golden_ratio_plot.renderer.ablation import AblationRenderer
+from golden_ratio_plot.renderer.sensitivity import SensitivityRenderer
 
-_MODES = ("ablation",)
+_MODES = ("ablation", "sensitivity")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -87,9 +88,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.font_size_pt < 7.0:
+    _min_fs = 6.0 if args.mode == "sensitivity" else 7.0
+    if args.font_size_pt < _min_fs:
         parser.error(
-            f"--font_size_pt must be ≥ 7 for ACM compliance (got {args.font_size_pt})."
+            f"--font_size_pt must be ≥ {_min_fs} for this mode (got {args.font_size_pt})."
         )
 
     config = PlotConfig(
@@ -112,18 +114,26 @@ def main(argv: list[str] | None = None) -> int:
 
     if config.mode == "ablation":
         renderer = AblationRenderer(config)
+        if args.inputs:
+            datasets = [read_csv(f) for f in args.inputs]
+            renderer.render_panels(datasets)
+        else:
+            data = read_csv(config.input)
+            renderer.render(data)
+
+    elif config.mode == "sensitivity":
+        renderer = SensitivityRenderer(config)
+        if args.inputs:
+            datasets = [read_sensitivity_csv(f) for f in args.inputs]
+        else:
+            datasets = [read_sensitivity_csv(config.input)]
+        renderer.render_sensitivity(datasets)
+
     else:
         print(f"Unknown mode: {config.mode!r}", file=sys.stderr)
         return 1
 
-    if args.inputs:
-        datasets = [read_csv(f) for f in args.inputs]
-        renderer.render_panels(datasets)
-    else:
-        data = read_csv(config.input)
-        renderer.render(data)
-
-    for path in getattr(renderer, "_saved_paths", [config.output]):
+    for path in getattr(renderer, "_saved_paths", [config.output]):  # type: ignore[union-attr]
         print(f"Saved → {path}")
     return 0
 

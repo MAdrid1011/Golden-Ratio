@@ -1,0 +1,10 @@
+group,x,Accuracy (%),FPS
+__caption__,,(b) Effect of λ,
+Method A,0.001,83.4,22.7
+Method A,0.01,86.1,21.3
+Method A,0.1,87.3,21.6
+Method A,1,85.8,22.0
+Method B,0.001,80.2,24.9
+Method B,0.01,83.5,23.1
+Method B,0.1,85.0,23.4
+Method B,1,83.7,23.8

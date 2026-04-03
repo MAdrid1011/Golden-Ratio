@@ -1,0 +1,8 @@
+group,x,Accuracy (%),Latency (ms)
+__caption__,,(b) Effect of Network Depth,
+__interp__,,8,
+,2,81.3,8.4
+,4,84.9,11.2
+,6,87.8,13.9
+,8,87.2,17.6
+,10,86.5,22.3

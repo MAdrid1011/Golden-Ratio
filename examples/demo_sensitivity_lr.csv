@@ -1,0 +1,8 @@
+group,x,Accuracy (%),Latency (ms)
+__caption__,,(a) Effect of Learning Rate,
+__interp__,,8,
+,1e-4,83.2,14.7
+,3e-4,86.5,14.2
+,1e-3,87.8,13.9
+,3e-3,85.1,13.6
+,1e-2,80.4,13.1
