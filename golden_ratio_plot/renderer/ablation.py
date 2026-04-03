@@ -15,6 +15,14 @@ from golden_ratio_plot.config import PHI, PlotConfig
 from golden_ratio_plot.reader import AblationData, read_csv
 from golden_ratio_plot.renderer.base import BaseRenderer
 from golden_ratio_plot.utils.colors import palette_from_config
+from golden_ratio_plot.utils.labels import AXES_WIDTH_FRACTION as _AXES_WIDTH_FRACTION
+from golden_ratio_plot.utils.labels import vcenter_xticklabels as _vcenter_xticklabels
+from golden_ratio_plot.utils.legend import (
+    LEGEND_CHAR_WIDTH_FACTOR as _LEGEND_CHAR_WIDTH_FACTOR,
+    finalize_legend_rows as _finalize_legend_rows,
+    greedy_rows as _greedy_rows_util,
+    make_legend_kw as _make_legend_kw,
+)
 from golden_ratio_plot.utils.ticks import nice_range
 
 # ── Golden-ratio spacing constants ────────────────────────────────────────────
@@ -27,18 +35,11 @@ _BAR_UNIT = 1.0      # dimensionless unit width; all other sizes relative to thi
 # Unicode circled numerals (①②③) look nicer but are absent from Times New Roman.
 _CIRCLED = [f"({i + 1})" for i in range(20)]
 
-# Fraction of figure width available to the axes after y-axis / margins.
-_AXES_WIDTH_FRACTION = 0.82
 # Approximate width of one character as a fraction of the font size (pt).
 # Times New Roman is a proportional font; 0.62 is a conservative estimate used
 # for group-label wrapping (group labels use label_font_size = fs+2, and
 # overflow must be avoided).
 _CHAR_WIDTH_FACTOR = 0.62
-
-# Separate, less-conservative estimate for legend text (font_size_pt = 7).
-# Legend text tends to be narrower on average due to digits and symbols (+, -)
-# in the label names, so a smaller factor lets the packer use fewer rows.
-_LEGEND_CHAR_WIDTH_FACTOR = 0.50
 
 # A label whose longest line is within strict_max + _STRICT_TOLERANCE chars is
 # accepted even if it marginally overflows the cell (~0.5-char = <2 pt excess
@@ -70,7 +71,11 @@ class AblationRenderer(BaseRenderer):
 
     # ── Public multi-panel API ────────────────────────────────────────────────
 
-    def render_panels(self, datasets: List[AblationData]) -> None:
+    def render_panels(
+        self,
+        datasets: List[AblationData],
+        line_datasets: Optional[List[Optional[AblationData]]] = None,
+    ) -> None:
         """Render multiple datasets as vertically stacked panels in one figure.
 
         Each panel is a full bar chart drawn with the same style as the single-
@@ -105,9 +110,15 @@ class AblationRenderer(BaseRenderer):
             self._configure_ticks(ax)
 
         # Phase 1 ─ draw all panels
+        _line_list: List[Optional[AblationData]] = (
+            list(line_datasets) if line_datasets else [None] * len(datasets)
+        )
+        # Pad to match length of datasets.
+        while len(_line_list) < len(datasets):
+            _line_list.append(None)
         states = [
-            self._draw_content(fig, ax, data)
-            for ax, data in zip(axes, datasets)
+            self._draw_content(fig, ax, data, line_data_override=ld)
+            for ax, data, ld in zip(axes, datasets, _line_list)
         ]
 
         # Target gap between the bottom of one panel's caption and the top of the
@@ -147,10 +158,20 @@ class AblationRenderer(BaseRenderer):
         renderer = fig.canvas.get_renderer()
         self._draw_finalize(fig, ax, state, renderer)
 
-    def _draw_content(self, fig: Figure, ax: Axes, data: AblationData) -> Dict:
+    def _draw_content(
+        self,
+        fig: Figure,
+        ax: Axes,
+        data: AblationData,
+        line_data_override: Optional[AblationData] = None,
+    ) -> Dict:
         """Phase 1: draw all chart content and create initial legend positions.
 
         Returns a state dict consumed by :meth:`_draw_finalize`.
+
+        ``line_data_override``, when provided, is used as the line-chart data
+        instead of loading ``cfg.input_line`` from disk.  This allows
+        :meth:`render_panels` to supply a different line CSV per panel.
         """
         cfg = self.config
         colors = palette_from_config(data.n_labels, cfg.custom_palette, cfg.palette_hue)
@@ -163,8 +184,12 @@ class AblationRenderer(BaseRenderer):
         line_legend_key = ""
         line_data_max = 0.0
 
-        if cfg.input_line:
+        if line_data_override is not None:
+            line_data = line_data_override
+        elif cfg.input_line:
             line_data = read_csv(cfg.input_line)
+
+        if line_data is not None:
             line_y_label, line_legend_key = _split_label_key(line_data.value_label)
             line_data_max = max(line_data.all_values())
             # Complementary hue for harmonious contrast: blue (210°) → orange (30°)
@@ -206,7 +231,7 @@ class AblationRenderer(BaseRenderer):
                         f"{value:g}",
                         ha="center",
                         va="bottom",
-                        fontsize=cfg.font_size_pt,
+                        fontsize=max(4.0, cfg.font_size_pt - 2),
                         clip_on=False,
                     )
 
@@ -215,11 +240,13 @@ class AblationRenderer(BaseRenderer):
         data_min = cfg.y_min if cfg.y_min is not None else 0.0
         data_max = cfg.y_max if cfg.y_max is not None else max(all_values)
 
+        # Horizontal value labels need only a small clearance above the bar.
+        _top_pad = 0.3 if cfg.show_values else 0.618
         axis_min, axis_max_prov, ticks = nice_range(
             data_min,
             data_max,
             n=cfg.y_ticks,
-            top_padding_intervals=0.618,
+            top_padding_intervals=_top_pad,
         )
         ax.set_ylim(axis_min, axis_max_prov)
         ax.set_yticks(ticks)
@@ -261,7 +288,7 @@ class AblationRenderer(BaseRenderer):
             )
             ax2.set_ylim(0.0, r_max_prov)
             ax2.set_yticks(r_ticks_prov)
-            ax2.set_ylabel(line_y_label, fontsize=xlbl_fontsize)
+            ax2.set_ylabel(line_y_label, fontsize=cfg.font_size_pt)
             ax2.tick_params(
                 axis="y", which="major",
                 direction="out",
@@ -295,7 +322,7 @@ class AblationRenderer(BaseRenderer):
 
         # ── Axis labels ───────────────────────────────────────────────────────
         left_y_label, _ = _split_label_key(data.value_label)
-        ax.set_ylabel(left_y_label, fontsize=xlbl_fontsize)
+        ax.set_ylabel(left_y_label, fontsize=cfg.font_size_pt)
 
         # ── Subfigure caption (below x-axis tick labels) ──────────────────────
         if data.caption:
@@ -395,27 +422,8 @@ class AblationRenderer(BaseRenderer):
             ax2.yaxis.set_major_formatter(_mticker.FormatStrFormatter(f"%.{dp}f"))
 
         # ── Vertically centre short x-tick labels within the tallest label's space ─
-        # Labels are top-aligned (leading=0 in _pad_to_uniform_lines) so that
-        # tight_layout sees accurate heights.  To centre shorter labels we increase
-        # their tick pad by half a line-height (in points).  set_pad() is stored on
-        # the Tick object and survives every subsequent canvas.draw() call, unlike
-        # Affine2D transforms on Text objects which get reset by the tick machinery.
         xlbl_fs = state.get("xlbl_fontsize", cfg.font_size_pt)
-        line_h_pt = xlbl_fs * 1.25  # approx line height in points (1.25× leading)
-        tick_lbls = ax.get_xticklabels()
-        major_ticks = ax.xaxis.get_major_ticks()
-        if tick_lbls and major_ticks:
-            max_content = max(
-                sum(1 for ln in lbl.get_text().split("\n") if ln.strip())
-                for lbl in tick_lbls
-            )
-            for tick, lbl in zip(major_ticks, tick_lbls):
-                n_content = sum(
-                    1 for ln in lbl.get_text().split("\n") if ln.strip()
-                )
-                if n_content < max_content:
-                    extra_pad = (max_content - n_content) * line_h_pt / 2.0
-                    tick.set_pad(tick.get_pad() + extra_pad)
+        _vcenter_xticklabels(ax, xlbl_fs)
 
 
 # ── Position computation ──────────────────────────────────────────────────────
@@ -709,44 +717,9 @@ def _greedy_rows(
     cfg: "PlotConfig",
     font_size: Optional[float] = None,
 ) -> List[Tuple[list, List[str]]]:
-    """Greedy bin-packing: pack items left-to-right into as few rows as possible.
-
-    Uses ``_LEGEND_CHAR_WIDTH_FACTOR`` (smaller than the group-label factor)
-    because legend text contains many narrow characters (digits, +, -,
-    parentheses).
-
-    Returns a list of ``(handles_subset, labels_subset)`` ordered top-to-bottom
-    (row 0 = first labels, topmost in the figure).
-    """
+    """Delegate to :func:`utils.legend.greedy_rows` using the axes-width budget."""
     fs = font_size if font_size is not None else cfg.font_size_pt
-    col_gap = 1.618 * fs
-    available = cfg.width_pt * _AXES_WIDTH_FRACTION
-
-    item_widths = [
-        (0.7 + 0.618) * fs + len(lbl) * fs * _LEGEND_CHAR_WIDTH_FACTOR
-        for lbl in labels
-    ]
-
-    rows: List[Tuple[list, List[str]]] = []
-    cur_h: list = []
-    cur_l: List[str] = []
-    cur_w = 0.0
-
-    for h, lbl, w in zip(handles, labels, item_widths):
-        if not cur_l:
-            cur_h, cur_l, cur_w = [h], [lbl], w
-        elif cur_w + col_gap + w <= available:
-            cur_h.append(h)
-            cur_l.append(lbl)
-            cur_w += col_gap + w
-        else:
-            rows.append((cur_h, cur_l))
-            cur_h, cur_l, cur_w = [h], [lbl], w
-
-    if cur_l:
-        rows.append((cur_h, cur_l))
-
-    return rows
+    return _greedy_rows_util(labels, handles, cfg.width_pt * _AXES_WIDTH_FRACTION, fs)
 
 
 def _draw_legend_init(
@@ -797,17 +770,7 @@ def _draw_legend_init(
     rows = _greedy_rows(labels, handles, cfg, font_size=fs)
     n_color_rows = len(rows)
 
-    legend_kw = dict(
-        frameon=False,
-        fontsize=fs,
-        handlelength=1.0,
-        handleheight=1.0,
-        handletextpad=0.4,
-        columnspacing=0.5,
-        labelspacing=0.0,
-        borderpad=0.0,
-        borderaxespad=0.0,
-    )
+    legend_kw = _make_legend_kw(fs)
 
     # Stack all rows at y=1.01 (placeholder).  Draw bottom-to-top so the last
     # ax.legend() call (topmost row) is what tight_layout budgets space for.
@@ -851,29 +814,6 @@ def _draw_legend_init(
     return all_legs, n_color_rows
 
 
-def _finalize_legend_rows(
-    ax: Axes,
-    all_legs: List,
-    n_color_rows: int,
-    renderer,
-) -> None:
-    """Measure pixel height of legend rows and reposition them precisely.
-
-    Must be called after ``fig.tight_layout()`` and ``fig.canvas.draw()``.
-    """
-    if not all_legs:
-        return
-
-    ax_height_px  = ax.get_window_extent(renderer).height
-    # Measure the bottommost color row (index 0).
-    leg_height_px = all_legs[0].get_window_extent(renderer).height
-    row_step = leg_height_px / ax_height_px   # axes-fraction units
-
-    for row_idx, leg in enumerate(all_legs[:n_color_rows]):
-        y = 1.01 + row_idx * row_step
-        leg.set_bbox_to_anchor((1.0, y), transform=ax.transAxes)
-
-    # Mapping row sits above all color rows.
-    if len(all_legs) > n_color_rows:
-        y_map = 1.01 + n_color_rows * row_step
-        all_legs[n_color_rows].set_bbox_to_anchor((1.0, y_map), transform=ax.transAxes)
+# _finalize_legend_rows is imported from utils.legend and re-exported here
+# for backward compatibility with any external callers.
+# (The name is already imported at the top of this module.)

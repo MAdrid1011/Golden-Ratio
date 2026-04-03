@@ -19,10 +19,15 @@ python main.py --inputs examples/ablation_example_single.csv \
                         examples/ablation_example_single.csv \
                --output out/fig_multi
 
-# Bar chart + right-axis line overlay
+# Bar chart + right-axis line overlay (single panel)
 python main.py --input examples/ablation_example_single.csv \
-               --input_line examples/ablation_example_single.csv \
+               --input_line examples/ablation_line_overlay.csv \
                --output out/fig_line
+
+# Multi-panel, each panel with its own right-axis line overlay
+python main.py --inputs panel_a.csv panel_b.csv \
+               --input_lines line_a.csv line_b.csv \
+               --output out/fig_dual_panels
 
 # Custom palette and 8 y-axis ticks
 python main.py --input examples/ablation_example_single.csv \
@@ -112,7 +117,8 @@ The right axis uses the same tick-count target (`--y_ticks`) as the left axis an
 |------|-------------|
 | `--input CSV` | Single-panel CSV. Mutually exclusive with `--inputs`. |
 | `--inputs CSV …` | One CSV per panel; panels stacked vertically. Mutually exclusive with `--input`. |
-| `--input_line CSV` | Secondary CSV for right-axis line overlay (single-panel only). |
+| `--input_line CSV` | Secondary CSV for a right-axis line overlay on the single panel. |
+| `--input_lines CSV …` | One line-chart CSV per panel (matches order of `--inputs`). Use `''` as a placeholder to skip a specific panel's line. |
 | `--output PATH` | Output base path without extension. Both `.pdf` and `.png` are written by default. |
 | `--formats fmt …` | Override output formats: any of `pdf png svg eps`. Default: `pdf png`. |
 

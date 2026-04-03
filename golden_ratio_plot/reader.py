@@ -302,6 +302,102 @@ def read_sensitivity_csv(path: str | Path) -> SensitivityData:
     )
 
 
+# ── Decomposition chart data model ────────────────────────────────────────────
+
+@dataclass
+class DecompData:
+    """Structured data for a comparison + decomposition bar chart.
+
+    Attributes
+    ----------
+    groups   : ordered x-axis group labels.
+    bars     : ordered bar names within each group (the comparison axis).
+    segments : bar_name → ordered list of stack-segment names.
+               A single entry of ``""`` means the bar is unsegmented (solid).
+    values   : (group, bar, segment) → numeric value.
+    y_label  : y-axis label taken from the CSV metric column header.
+    caption  : optional panel subtitle (from ``__caption__`` metadata row).
+    """
+    groups: List[str] = field(default_factory=list)
+    bars: List[str] = field(default_factory=list)
+    segments: Dict[str, List[str]] = field(default_factory=dict)
+    values: Dict[Tuple[str, str, str], float] = field(default_factory=dict)
+    y_label: str = "value"
+    caption: str = ""
+
+
+def read_decomp_csv(path: "str | Path") -> DecompData:
+    """Read a CSV into :class:`DecompData`.
+
+    Required column order: ``group``, ``bar``, ``segment``, ``<metric>``.
+    The ``segment`` column may be empty for an unsegmented (solid) bar.
+
+    Metadata rows
+    -------------
+    ``__caption__`` : caption text in any non-group column.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Input CSV not found: {path}")
+
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fields = reader.fieldnames or []
+        if len(fields) < 4:
+            raise ValueError(
+                f"decomp CSV needs ≥ 4 columns (group, bar, segment, metric): {path}"
+            )
+
+        group_col = fields[0]
+        bar_col   = fields[1]
+        seg_col   = fields[2]
+        y_col     = fields[3]
+
+        groups_seen: List[str] = []
+        bars_seen:   List[str] = []
+        segs: Dict[str, List[str]] = {}
+        values: Dict[Tuple[str, str, str], float] = {}
+        caption = ""
+
+        for row in reader:
+            grp     = (row.get(group_col) or "").strip()
+            bar     = (row.get(bar_col)   or "").strip()
+            seg     = (row.get(seg_col)   or "").strip()
+            val_raw = (row.get(y_col)     or "").strip()
+
+            if grp == "__caption__":
+                caption = next((v for v in [bar, seg, val_raw] if v), "")
+                continue
+
+            if not grp or not bar:
+                continue
+
+            try:
+                val = float(val_raw)
+            except ValueError:
+                continue
+
+            if grp not in groups_seen:
+                groups_seen.append(grp)
+            if bar not in bars_seen:
+                bars_seen.append(bar)
+            if bar not in segs:
+                segs[bar] = []
+            if seg not in segs[bar]:
+                segs[bar].append(seg)
+
+            values[(grp, bar, seg)] = val
+
+    return DecompData(
+        groups=groups_seen,
+        bars=bars_seen,
+        segments=segs,
+        values=values,
+        y_label=y_col,
+        caption=caption,
+    )
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _validate_fieldnames(fieldnames: list[str] | None) -> None:

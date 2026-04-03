@@ -16,11 +16,12 @@ import argparse
 import sys
 
 from golden_ratio_plot.config import PlotConfig
-from golden_ratio_plot.reader import read_csv, read_sensitivity_csv
+from golden_ratio_plot.reader import read_csv, read_decomp_csv, read_sensitivity_csv
 from golden_ratio_plot.renderer.ablation import AblationRenderer
+from golden_ratio_plot.renderer.decomp import DecompRenderer
 from golden_ratio_plot.renderer.sensitivity import SensitivityRenderer
 
-_MODES = ("ablation", "sensitivity")
+_MODES = ("ablation", "decomp", "sensitivity")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,6 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input_line", default="", metavar="CSV",
                    help="Optional path to a secondary CSV for a line chart on "
                         "the right y-axis.  Same group/label structure as --input.")
+    p.add_argument("--input_lines", nargs="+", default=[], metavar="CSV",
+                   help="One line-chart CSV per panel (matches order of --inputs). "
+                        "Use '' as a placeholder to skip the line for a specific panel.")
     p.add_argument("--output", default="out/figure", metavar="BASEPATH",
                    help="Output base path without extension (e.g. out/fig1).")
     p.add_argument("--formats", nargs="+", default=["pdf", "png"],
@@ -116,10 +120,23 @@ def main(argv: list[str] | None = None) -> int:
         renderer = AblationRenderer(config)
         if args.inputs:
             datasets = [read_csv(f) for f in args.inputs]
-            renderer.render_panels(datasets)
+            line_datasets = None
+            if args.input_lines:
+                line_datasets = [
+                    read_csv(p) if p else None
+                    for p in args.input_lines
+                ]
+            renderer.render_panels(datasets, line_datasets=line_datasets)
         else:
             data = read_csv(config.input)
             renderer.render(data)
+
+    elif config.mode == "decomp":
+        renderer = DecompRenderer(config)
+        if args.inputs:
+            parser.error("--mode decomp currently supports only a single --input.")
+        data = read_decomp_csv(config.input)
+        renderer.render(data)
 
     elif config.mode == "sensitivity":
         renderer = SensitivityRenderer(config)

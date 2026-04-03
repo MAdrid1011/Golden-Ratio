@@ -1,0 +1,41 @@
+group,bar,segment,Execution Time (ms)
+Sear Steak,S1(SPIM),,33.7
+Sear Steak,GPU Stages,S2(GPU),15.2
+Sear Steak,GPU Stages,S3(GPU),28.4
+Sear Steak,GPU Stages,S4(GPU),45.1
+Sear Steak,GPU Stages,S5(GPU),45.1
+Coffee Martini,S1(SPIM),,70.4
+Coffee Martini,GPU Stages,S2(GPU),22.4
+Coffee Martini,GPU Stages,S3(GPU),44.8
+Coffee Martini,GPU Stages,S4(GPU),70.1
+Coffee Martini,GPU Stages,S5(GPU),69.2
+Cut Roasted Beef,S1(SPIM),,48.1
+Cut Roasted Beef,GPU Stages,S2(GPU),20.2
+Cut Roasted Beef,GPU Stages,S3(GPU),37.1
+Cut Roasted Beef,GPU Stages,S4(GPU),60.2
+Cut Roasted Beef,GPU Stages,S5(GPU),58.9
+Cook Spinach,S1(SPIM),,46.3
+Cook Spinach,GPU Stages,S2(GPU),17.3
+Cook Spinach,GPU Stages,S3(GPU),33.2
+Cook Spinach,GPU Stages,S4(GPU),54.8
+Cook Spinach,GPU Stages,S5(GPU),53.5
+Flame Steak,S1(SPIM),,47.7
+Flame Steak,GPU Stages,S2(GPU),22.0
+Flame Steak,GPU Stages,S3(GPU),41.0
+Flame Steak,GPU Stages,S4(GPU),64.5
+Flame Steak,GPU Stages,S5(GPU),64.5
+Flame Salmon,S1(SPIM),,73.2
+Flame Salmon,GPU Stages,S2(GPU),22.8
+Flame Salmon,GPU Stages,S3(GPU),43.0
+Flame Salmon,GPU Stages,S4(GPU),66.4
+Flame Salmon,GPU Stages,S5(GPU),66.7
+Dance3,S1(SPIM),,83.5
+Dance3,GPU Stages,S2(GPU),16.8
+Dance3,GPU Stages,S3(GPU),32.1
+Dance3,GPU Stages,S4(GPU),51.8
+Dance3,GPU Stages,S5(GPU),51.7
+Actor1_4,S1(SPIM),,35.2
+Actor1_4,GPU Stages,S2(GPU),12.0
+Actor1_4,GPU Stages,S3(GPU),21.8
+Actor1_4,GPU Stages,S4(GPU),36.2
+Actor1_4,GPU Stages,S5(GPU),35.3
