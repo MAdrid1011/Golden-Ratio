@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+import colorsys
+import math
+import re
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib.patches as mpatches
-import matplotlib.transforms as mtransforms
+import matplotlib.ticker as _mticker
+import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-
+from matplotlib.lines import Line2D
 from golden_ratio_plot.config import PHI, PlotConfig
-from golden_ratio_plot.reader import AblationData
+from golden_ratio_plot.reader import AblationData, read_csv
 from golden_ratio_plot.renderer.base import BaseRenderer
 from golden_ratio_plot.utils.colors import palette_from_config
 from golden_ratio_plot.utils.ticks import nice_range
@@ -26,8 +30,21 @@ _CIRCLED = [f"({i + 1})" for i in range(20)]
 # Fraction of figure width available to the axes after y-axis / margins.
 _AXES_WIDTH_FRACTION = 0.82
 # Approximate width of one character as a fraction of the font size (pt).
-# Times New Roman is a proportional font; 0.55 is a conservative average.
-_CHAR_WIDTH_FACTOR = 0.55
+# Times New Roman is a proportional font; 0.62 is a conservative estimate used
+# for group-label wrapping (group labels use label_font_size = fs+2, and
+# overflow must be avoided).
+_CHAR_WIDTH_FACTOR = 0.62
+
+# Separate, less-conservative estimate for legend text (font_size_pt = 7).
+# Legend text tends to be narrower on average due to digits and symbols (+, -)
+# in the label names, so a smaller factor lets the packer use fewer rows.
+_LEGEND_CHAR_WIDTH_FACTOR = 0.50
+
+# A label whose longest line is within strict_max + _STRICT_TOLERANCE chars is
+# accepted even if it marginally overflows the cell (~0.5-char = <2 pt excess
+# at 6 pt, barely perceptible).  This lets the algorithm settle at 6 pt rather
+# than cascading all the way to 5 pt.
+_STRICT_TOLERANCE = 0.5
 
 # Fixed headroom above the tallest bar (or tallest value label) in pt.
 _TOP_PAD_PT = 5.0
@@ -51,14 +68,112 @@ class AblationRenderer(BaseRenderer):
       - row height = font_size × 1.618
     """
 
+    # ── Public multi-panel API ────────────────────────────────────────────────
+
+    def render_panels(self, datasets: List[AblationData]) -> None:
+        """Render multiple datasets as vertically stacked panels in one figure.
+
+        Each panel is a full bar chart drawn with the same style as the single-
+        panel :meth:`render` path.  An optional subfigure caption stored in
+        ``data.caption`` is rendered below each panel as its x-axis label.
+
+        The layout sequence is:
+
+          1. Phase 1 — draw all panels (bars, axes, legend initial positions).
+          2. Single ``fig.tight_layout()`` for the whole figure.
+          3. Single ``fig.canvas.draw()`` so all bboxes are accurate.
+          4. Phase 2 — finalize each panel (tighten margins, reposition legends,
+             sync right axis if present).
+        """
+        if not datasets:
+            return
+        cfg = self.config
+        n = len(datasets)
+        self._apply_rcparams()
+
+        # Each panel's axes area is 1/n of the single-panel golden-ratio height.
+        # Non-axes content (legend, caption, tick labels, inter-panel gap) needs a
+        # fixed overhead per panel regardless of n.  Empirically this overhead is
+        # ≈ 0.18 × cfg.height_in (reduced from original 0.25× to tighten layout),
+        # giving: total = axes_total + n × decoration = cfg.height_in × (1 + 0.18n).
+        total_h_in = cfg.height_in * (1.0 + 0.16 * n)
+
+        fig = plt.figure(figsize=(cfg.width_in, total_h_in))
+        axes = [fig.add_subplot(n, 1, i + 1) for i in range(n)]
+        for ax in axes:
+            self._configure_spines(ax)
+            self._configure_ticks(ax)
+
+        # Phase 1 ─ draw all panels
+        states = [
+            self._draw_content(fig, ax, data)
+            for ax, data in zip(axes, datasets)
+        ]
+
+        # Target gap between the bottom of one panel's caption and the top of the
+        # next panel's content (legend / bars): 1 pt.  h_pad is in font-size units.
+        _h_pad = 1.0 / cfg.font_size_pt
+
+        # First tight_layout: allocates space based on initial legend positions.
+        fig.tight_layout(h_pad=_h_pad)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+        # Phase 2 ─ finalize each panel (tighten margins, reposition legends, …)
+        for ax, state in zip(axes, states):
+            self._draw_finalize(fig, ax, state, renderer)
+
+        # Second tight_layout: legends have been repositioned; let matplotlib
+        # re-measure the full figure extent (including captions below and legend
+        # rows above) so inter-panel gaps are correctly sized.
+        fig.tight_layout(h_pad=_h_pad)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+        # Re-finalize legend row positions for the new axes heights.
+        for ax, state in zip(axes, states):
+            _finalize_legend_rows(ax, state["all_legs"], state["n_color_rows"], renderer)
+
+        self._save(fig)
+        plt.close(fig)
+
+    # ── Internal draw phases ──────────────────────────────────────────────────
+
     def _draw(self, fig: Figure, ax: Axes, data: AblationData) -> None:
+        """Single-panel draw (called by :meth:`BaseRenderer.render`)."""
+        state = self._draw_content(fig, ax, data)
+        fig.tight_layout()
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        self._draw_finalize(fig, ax, state, renderer)
+
+    def _draw_content(self, fig: Figure, ax: Axes, data: AblationData) -> Dict:
+        """Phase 1: draw all chart content and create initial legend positions.
+
+        Returns a state dict consumed by :meth:`_draw_finalize`.
+        """
         cfg = self.config
         colors = palette_from_config(data.n_labels, cfg.custom_palette, cfg.palette_hue)
 
+        # ── Load optional line-chart data ─────────────────────────────────────
+        line_data: Optional[AblationData] = None
+        ax2: Optional[Axes] = None
+        line_color: Optional[Tuple[float, float, float]] = None
+        line_y_label = ""
+        line_legend_key = ""
+        line_data_max = 0.0
+
+        if cfg.input_line:
+            line_data = read_csv(cfg.input_line)
+            line_y_label, line_legend_key = _split_label_key(line_data.value_label)
+            line_data_max = max(line_data.all_values())
+            # Complementary hue for harmonious contrast: blue (210°) → orange (30°)
+            line_hue = (cfg.palette_hue + 180.0) % 360.0
+            line_color = colorsys.hls_to_rgb(line_hue / 360.0, 0.50, 0.80)
+
         # ── Determine group label display mode ────────────────────────────────
-        # Estimate the pt width available per group after y-axis margins.
         cell_width_pt = cfg.width_pt * _AXES_WIDTH_FRACTION / data.n_groups
-        use_circled, group_display = _group_labels(
+        use_circled, group_display, rotation_angle, xlbl_fontsize = _group_labels(
             data.groups, cell_width_pt, cfg.label_font_size
         )
 
@@ -66,10 +181,9 @@ class AblationRenderer(BaseRenderer):
         positions, group_centers, separator_xs, cell_width = _compute_positions(
             data.n_groups, data.n_labels
         )
-        # positions[g][l] → x coordinate of bar (g, l)
 
         # ── Draw bars ─────────────────────────────────────────────────────────
-        bar_width = _BAR_UNIT  # data-space width; matplotlib uses this directly
+        bar_width = _BAR_UNIT
         for g, group in enumerate(data.groups):
             for l_idx, label in enumerate(data.labels):
                 value = data.data.get((group, label))
@@ -98,13 +212,9 @@ class AblationRenderer(BaseRenderer):
 
         # ── Y-axis range & ticks (provisional) ───────────────────────────────
         all_values = data.all_values()
-        # Bar charts should start at 0 by default so bar heights are truthful.
-        # Override with --y_min if a different baseline is needed.
         data_min = cfg.y_min if cfg.y_min is not None else 0.0
         data_max = cfg.y_max if cfg.y_max is not None else max(all_values)
 
-        # Provisional axis_max: generous enough to keep ticks inside the axes.
-        # The tight 5-pt top margin is applied in a second pass after layout.
         axis_min, axis_max_prov, ticks = nice_range(
             data_min,
             data_max,
@@ -115,7 +225,6 @@ class AblationRenderer(BaseRenderer):
         ax.set_yticks(ticks)
 
         # ── Horizontal gridlines ──────────────────────────────────────────────
-        # Light-gray dashed lines at every y-tick, drawn below all other artists.
         ax.set_axisbelow(True)
         ax.yaxis.grid(
             True,
@@ -125,16 +234,53 @@ class AblationRenderer(BaseRenderer):
             zorder=0,
         )
 
+        # ── Line chart on twin right axis ─────────────────────────────────────
+        if line_data is not None and line_color is not None:
+            ax2 = ax.twinx()
+
+            for g, group in enumerate(data.groups):
+                xs = [positions[g][l_idx] for l_idx in range(data.n_labels)]
+                ys = [line_data.data.get((group, label)) for label in data.labels]
+                if any(y is None for y in ys):
+                    continue
+                ax2.plot(
+                    xs, ys,
+                    color=line_color,
+                    linestyle="--",
+                    linewidth=0.8,
+                    marker="o",
+                    markersize=2.0,
+                    markerfacecolor=line_color,
+                    markeredgewidth=0,
+                    zorder=5,
+                )
+
+            # Provisional right-axis range (same n_ticks as left, synced later)
+            _, r_max_prov, r_ticks_prov = nice_range(
+                0.0, line_data_max, n=cfg.y_ticks, top_padding_intervals=0.618
+            )
+            ax2.set_ylim(0.0, r_max_prov)
+            ax2.set_yticks(r_ticks_prov)
+            ax2.set_ylabel(line_y_label, fontsize=xlbl_fontsize)
+            ax2.tick_params(
+                axis="y", which="major",
+                direction="out",
+                width=cfg.spine_linewidth_pt,
+                length=3.0,
+            )
+            ax2.tick_params(axis="y", which="minor", length=0)
+            # Hide duplicate spines; keep only the right spine
+            for s in ("top", "bottom", "left"):
+                ax2.spines[s].set_visible(False)
+            ax2.spines["right"].set_linewidth(cfg.spine_linewidth_pt)
+            ax2.spines["right"].set_clip_on(False)
+
         # ── X-axis ticks & group labels ───────────────────────────────────────
         ax.set_xticks(group_centers)
-        ax.set_xticklabels(group_display, fontsize=cfg.label_font_size)
-        # Centre multi-line tick label text horizontally within each label box.
+        ax.set_xticklabels(group_display, fontsize=xlbl_fontsize)
         for lbl in ax.get_xticklabels():
             lbl.set_multialignment("center")
-        # Remove x-axis tick marks (groups are not numeric positions)
         ax.tick_params(axis="x", which="both", length=0)
-
-        # X limits: spine-to-outer-bar-edge = margin = φ/2 on both sides
         ax.set_xlim(0.0, data.n_groups * cell_width)
 
         # ── Vertical group separators ─────────────────────────────────────────
@@ -148,11 +294,18 @@ class AblationRenderer(BaseRenderer):
             )
 
         # ── Axis labels ───────────────────────────────────────────────────────
-        # Y-axis label comes directly from the CSV value-column header.
-        # X-axis title is omitted; group names on tick labels are self-explanatory.
-        ax.set_ylabel(data.value_label, fontsize=cfg.label_font_size)
+        left_y_label, _ = _split_label_key(data.value_label)
+        ax.set_ylabel(left_y_label, fontsize=xlbl_fontsize)
 
-        # ── Legend (horizontal strip above the top spine) ─────────────────────
+        # ── Subfigure caption (below x-axis tick labels) ──────────────────────
+        if data.caption:
+            ax.set_xlabel(
+                data.caption,
+                fontsize=xlbl_fontsize + 1,
+                labelpad=0.5,
+            )
+
+        # ── Legend — phase 1: create rows at initial y=1.01 ──────────────────
         color_labels = list(data.labels)
         mapping_labels: List[str] = []
         if use_circled:
@@ -162,66 +315,107 @@ class AblationRenderer(BaseRenderer):
                 if i < len(_CIRCLED)
             ]
 
-        # legend calls tight_layout internally — final axes dimensions are now stable
-        _draw_legend(fig, ax, colors, color_labels, mapping_labels, cfg)
+        all_legs, n_color_rows = _draw_legend_init(
+            fig, ax, colors, color_labels, mapping_labels, cfg,
+            font_size=xlbl_fontsize,
+            line_color=line_color,
+            line_legend_key=line_legend_key,
+        )
 
-        # ── Second pass: measure display geometry, then tighten top and centre labels ──
-        # tight_layout is already done; axes bbox is now stable.
-        fig.canvas.draw()
-        renderer = fig.canvas.get_renderer()
+        top_pad_pt = _TOP_PAD_PT
+        if cfg.show_values:
+            top_pad_pt += cfg.font_size_pt
 
-        # ── Re-centre single-line x-axis labels (when mixed with two-line labels) ──
-        # Strategy: measure the pixel-space vertical centre of every two-line tick
-        # label; hide all tick labels; redraw them all with ax.text() + va='center'
-        # anchored at that shared centre so single-line labels appear vertically
-        # centred in the same space as two-line labels.
-        tick_lbls = ax.get_xticklabels()
-        two_line_mask = ["\n" in d for d in group_display]
-        if any(two_line_mask) and not all(two_line_mask):
-            ax_bb = ax.get_window_extent(renderer)
-            # Vertical centre (display pixels) of each two-line tick label
-            two_line_cy = [
-                (tick_lbls[i].get_window_extent(renderer).y0 +
-                 tick_lbls[i].get_window_extent(renderer).y1) / 2.0
-                for i, is2 in enumerate(two_line_mask) if is2
-            ]
-            # Use the lowest centre (two-line labels reach furthest below the axis)
-            ref_cy_disp = min(two_line_cy)
-            # Convert to axes-fraction y so we can use a blended transform
-            ref_cy_ax = (ref_cy_disp - ax_bb.y0) / ax_bb.height
+        return {
+            "ticks": ticks,
+            "data_max": data_max,
+            "top_pad_pt": top_pad_pt,
+            "ax2": ax2,
+            "line_data_max": line_data_max,
+            "all_legs": all_legs,
+            "n_color_rows": n_color_rows,
+            "xlbl_fontsize": xlbl_fontsize,
+        }
 
-            # Hide original tick labels and replace with custom text artists
-            for t in tick_lbls:
-                t.set_visible(False)
-            blended = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
-            for xc, lbl_str in zip(group_centers, group_display):
-                ax.text(
-                    xc, ref_cy_ax, lbl_str,
-                    transform=blended,
-                    ha="center", va="center",
-                    multialignment="center",
-                    fontsize=cfg.label_font_size,
-                    clip_on=False,
-                )
+    def _draw_finalize(
+        self,
+        fig: Figure,
+        ax: Axes,
+        state: Dict,
+        renderer,
+    ) -> None:
+        """Phase 2: tighten margins, reposition legends, sync right axis.
 
-        # ax_bb already captured above; use it for the tight-margin calculation too.
-        if not any(two_line_mask) or all(two_line_mask):
-            ax_bb = ax.get_window_extent(renderer)
+        Must be called after ``fig.tight_layout()`` and ``fig.canvas.draw()``
+        so that all bounding boxes are accurate.
+        """
+        cfg           = self.config
+        ticks         = state["ticks"]
+        data_max      = state["data_max"]
+        top_pad_pt    = state["top_pad_pt"]
+        ax2           = state["ax2"]
+        line_data_max = state["line_data_max"]
+        all_legs      = state["all_legs"]
+        n_color_rows  = state["n_color_rows"]
+
+        # Labels are pre-padded to uniform line count in _group_labels, so
+        # tight_layout already has accurate heights — no manual re-centring needed.
+        ax_bb = ax.get_window_extent(renderer)
         ax_height_pt = ax_bb.height / (fig.dpi / 72.0)
         cur_ymin, cur_ymax = ax.get_ylim()
         data_per_pt = (cur_ymax - cur_ymin) / ax_height_pt
 
-        top_pad_pt = _TOP_PAD_PT
-        if cfg.show_values:
-            # Leave room for the value text: approximate its height as font_size_pt
-            top_pad_pt += cfg.font_size_pt
-
+        # ── Tighten top margin ─────────────────────────────────────────────────
         axis_max_tight = data_max + top_pad_pt * data_per_pt
-        # Remove ticks that fall above the new ceiling
         tick_step = ticks[1] - ticks[0] if len(ticks) >= 2 else 1.0
         final_ticks = [t for t in ticks if t <= axis_max_tight + tick_step * 1e-9]
         ax.set_ylim(cur_ymin, axis_max_tight)
         ax.set_yticks(final_ticks)
+
+        # ── Reposition legend rows (measure real pixel heights first) ──────────
+        _finalize_legend_rows(ax, all_legs, n_color_rows, renderer)
+
+        # ── Sync right axis — physical alignment + clean tick labels ──────────
+        if ax2 is not None:
+            left_step = (
+                (final_ticks[1] - final_ticks[0]) if len(final_ticks) >= 2 else 1.0
+            )
+            scale_min = line_data_max / axis_max_tight if axis_max_tight > 0 else 1.0
+            right_step_min = left_step * scale_min
+            nice_right_step = _nice_ceil(right_step_min)
+            nice_scale = nice_right_step / left_step if left_step > 0 else 1.0
+
+            right_ymax  = axis_max_tight * nice_scale
+            right_ticks = [i * nice_right_step for i in range(len(final_ticks))]
+
+            ax2.set_ylim(0.0, right_ymax)
+            ax2.set_yticks(right_ticks)
+
+            dp = _decimal_places(nice_right_step)
+            ax2.yaxis.set_major_formatter(_mticker.FormatStrFormatter(f"%.{dp}f"))
+
+        # ── Vertically centre short x-tick labels within the tallest label's space ─
+        # Labels are top-aligned (leading=0 in _pad_to_uniform_lines) so that
+        # tight_layout sees accurate heights.  To centre shorter labels we increase
+        # their tick pad by half a line-height (in points).  set_pad() is stored on
+        # the Tick object and survives every subsequent canvas.draw() call, unlike
+        # Affine2D transforms on Text objects which get reset by the tick machinery.
+        xlbl_fs = state.get("xlbl_fontsize", cfg.font_size_pt)
+        line_h_pt = xlbl_fs * 1.25  # approx line height in points (1.25× leading)
+        tick_lbls = ax.get_xticklabels()
+        major_ticks = ax.xaxis.get_major_ticks()
+        if tick_lbls and major_ticks:
+            max_content = max(
+                sum(1 for ln in lbl.get_text().split("\n") if ln.strip())
+                for lbl in tick_lbls
+            )
+            for tick, lbl in zip(major_ticks, tick_lbls):
+                n_content = sum(
+                    1 for ln in lbl.get_text().split("\n") if ln.strip()
+                )
+                if n_content < max_content:
+                    extra_pad = (max_content - n_content) * line_h_pt / 2.0
+                    tick.set_pad(tick.get_pad() + extra_pad)
 
 
 # ── Position computation ──────────────────────────────────────────────────────
@@ -276,86 +470,308 @@ def _compute_positions(
 
 # ── Group label helpers ───────────────────────────────────────────────────────
 
+def _best_nline_split(
+    words: List[str],
+    max_chars: float,
+    n: int,
+) -> Optional[str]:
+    """Split *words* into at most *n* lines each ≤ *max_chars* characters.
+
+    Returns the split with the shortest maximum line length, or ``None`` when
+    impossible.  For ``n == 2`` delegates to :func:`_best_word_split` which
+    includes mid-word hyphenation.  Higher ``n`` values use plain word
+    boundaries only (sufficient for the 3-line case in practice).
+    """
+    text = " ".join(words)
+    if len(text) <= max_chars:
+        return text  # already fits in one line; no split needed
+    if n <= 1:
+        return None
+    if n == 2:
+        return _best_word_split(words, max_chars)
+
+    best: Optional[str] = None
+    best_max: float = float("inf")
+
+    for i in range(1, len(words)):
+        line1 = " ".join(words[:i])
+        if len(line1) > max_chars:
+            continue
+        rest = _best_nline_split(words[i:], max_chars, n - 1)
+        if rest is None:
+            continue
+        cand = line1 + "\n" + rest
+        m = max(len(ln) for ln in cand.split("\n"))
+        if m < best_max:
+            best_max, best = m, cand
+
+    return best
+
+
 def _best_word_split(words: List[str], max_chars: float) -> Optional[str]:
     """Split *words* into two lines that each fit within *max_chars*.
 
-    Tries every split point and returns the split whose longer line is minimal.
-    Returns ``None`` when no valid split exists (e.g. a single word is too long).
+    Scoring: primary = minimise max(len(line1), len(line2)); secondary =
+    minimise |len(line1) - len(line2)| so balanced splits (e.g. "Roast-\\n
+    ed Beef", diff=1) are preferred over unbalanced ones ("Roasted\\nBeef",
+    diff=3) when their max-length is equal.  Mid-word hyphenation is always
+    considered so it can compete with plain word-boundary splits.
+    Returns ``None`` when no valid split exists.
     """
     best: Optional[str] = None
     best_max_len: float = float("inf")
+    best_diff: float = float("inf")
+
+    # Minimum chars before (prefix) and after (suffix) a hyphen break.
+    # Prevents ugly splits like "S-pinach" or "Beef" → "Bee-f".
+    _MIN_PRE, _MIN_SUF = 3, 2
+
+    def _try(h1: str, h2: str, is_hyphen: bool = False) -> None:
+        """Record h1/h2 if they improve the current best.
+
+        Primary criterion  : minimise max line length.
+        Secondary criterion: prefer clean word-boundary splits over hyphenated
+                             ones (avoid "Cook S-pinach" when "Cook Spinach" fits).
+        Tertiary criterion : minimise |len(h1) − len(h2)| so balanced
+                             hyphenated splits (e.g. "Roast-\\ned Beef", diff=1)
+                             are preferred over unbalanced clean splits
+                             ("Roasted\\nBeef", diff=3) when both fit.
+        """
+        nonlocal best, best_max_len, best_diff, best_is_hyphen
+        if len(h1) > max_chars or len(h2) > max_chars:
+            return
+        m = max(len(h1), len(h2))
+        d = abs(len(h1) - len(h2))
+        better = (
+            m < best_max_len
+            or (m == best_max_len and (not is_hyphen) and best_is_hyphen)
+            or (m == best_max_len and is_hyphen == best_is_hyphen and d < best_diff)
+        )
+        if better:
+            best_max_len, best_diff, best_is_hyphen = m, d, is_hyphen
+            best = h1 + "\n" + h2
+
+    best_is_hyphen: bool = True  # will be overwritten on first hit
+
     for i in range(1, len(words)):
         line1 = " ".join(words[:i])
         line2 = " ".join(words[i:])
-        if len(line1) <= max_chars and len(line2) <= max_chars:
-            m = max(len(line1), len(line2))
-            if m < best_max_len:
-                best_max_len = m
-                best = line1 + "\n" + line2
+
+        # ── Plain word-boundary split ──────────────────────────────────────
+        _try(line1, line2, is_hyphen=False)
+
+        # ── Hyphenate the last word of line1 ──────────────────────────────
+        head = words[: i - 1]
+        w1 = words[i - 1]
+        pre = (" ".join(head) + " ") if head else ""
+        for j in range(_MIN_PRE, len(w1) - _MIN_SUF + 1):
+            _try(pre + w1[:j] + "-", w1[j:] + (" " + line2 if line2 else ""), True)
+
+        # ── Hyphenate the first word of line2 ─────────────────────────────
+        w2 = words[i]
+        tail = words[i + 1 :]
+        suf = " ".join(tail)
+        for j in range(_MIN_PRE, len(w2) - _MIN_SUF + 1):
+            _try(
+                (line1 + " " if line1 else "") + w2[:j] + "-",
+                w2[j:] + (" " + suf if suf else ""),
+                True,
+            )
+
     return best
+
+
+def _try_wrap_all(
+    groups: List[str],
+    max_chars: float,
+    max_lines: int,
+) -> Optional[List[str]]:
+    """Attempt to wrap every group label to *max_lines* lines of ≤ *max_chars*.
+
+    Returns the list of wrapped strings, or ``None`` if any label cannot fit.
+    """
+    result: List[str] = []
+    for g in groups:
+        if len(g) <= max_chars:
+            result.append(g)
+        else:
+            split = _best_nline_split(g.split(), max_chars, max_lines)
+            if split is None:
+                return None
+            result.append(split)
+    return result
 
 
 def _group_labels(
     groups: List[str],
     cell_width_pt: float,
     label_font_size: float,
-) -> Tuple[bool, List[str]]:
-    """Return ``(use_circled, display_labels)``.
+) -> Tuple[bool, List[str], int, float]:
+    """Return ``(use_circled, display_labels, rotation_angle, effective_font_size)``.
 
-    Strategy (no rotation allowed):
-      1. If a label fits on one line → keep it.
-      2. If it is too long but contains spaces → wrap at the best word boundary
-         so both lines stay within *max_chars*.
-      3. If it cannot be wrapped helpfully → fall back to parenthesised numerals.
+    Rotation is **never** used.  Priority order (stops at first success):
 
-    Vertical centring of single-line labels relative to two-line labels is handled
-    in ``_draw`` after ``fig.canvas.draw()`` using display-coordinate measurements.
+    For each font size *f* in ``[label_font_size … 5]``:
+
+      1. **2-line strict** — every line ≤ cell width / (f × char_factor).
+      2. **3-line strict** — same limit, up to 3 lines.
+
+    Only solutions where *every* line fits within the cell are accepted, which
+    prevents adjacent labels from overlapping.  If no font size down to 5 pt
+    produces a valid wrapping, fall back to parenthesised circled numerals.
     """
-    max_chars = cell_width_pt / (label_font_size * _CHAR_WIDTH_FACTOR)
+    _XLBL_MIN_PT = 5.0
 
-    wrapped: List[str] = []
-    any_two_line = False
+    for f in range(int(label_font_size), max(int(_XLBL_MIN_PT) - 1, int(label_font_size) - 5), -1):
+        fs = float(f)
+        if fs < _XLBL_MIN_PT:
+            break
+        strict_max = cell_width_pt / (fs * _CHAR_WIDTH_FACTOR) + _STRICT_TOLERANCE
 
-    for g in groups:
-        if len(g) <= max_chars:
-            wrapped.append(g)
-        else:
-            split = _best_word_split(g.split(), max_chars)
-            if split is None:
-                # Unbreakable — fall back to circled numbers for all groups
-                display = [
-                    _CIRCLED[i] if i < len(_CIRCLED) else str(i + 1)
-                    for i in range(len(groups))
-                ]
-                return True, display
-            wrapped.append(split)
-            any_two_line = True
+        # Pass 1: 2-line, strict (no overflow)
+        wrapped = _try_wrap_all(groups, strict_max, max_lines=2)
+        if wrapped is not None:
+            return False, _pad_to_uniform_lines(wrapped), 0, fs
 
-    return False, wrapped
+        # Pass 2: 2-line, generous (1.4× threshold — allows slight overflow for
+        # labels like "Cut Roa-\nsted Beef" that cannot be split cleanly in 2 lines)
+        wrapped = _try_wrap_all(groups, strict_max * 1.4, max_lines=2)
+        if wrapped is not None:
+            return False, _pad_to_uniform_lines(wrapped), 0, fs
+
+        # Pass 3: 3-line, strict
+        wrapped = _try_wrap_all(groups, strict_max, max_lines=3)
+        if wrapped is not None:
+            return False, _pad_to_uniform_lines(wrapped), 0, fs
+
+    # ── Circled numerals (absolute last resort, no rotation ever) ─────────────
+    display = [
+        _CIRCLED[i] if i < len(_CIRCLED) else str(i + 1)
+        for i in range(len(groups))
+    ]
+    return True, display, 0, label_font_size
+
+
+def _pad_to_uniform_lines(labels: List[str]) -> List[str]:
+    """Return labels unchanged.
+
+    ``tight_layout`` allocates space based on the tallest label (most newlines)
+    naturally, so shorter labels need no trailing-newline padding.  Padding was
+    removed because a trailing '\\n' on a short label (e.g. "Dance3\\n") creates
+    an invisible empty line that extends below the 2-line labels after
+    ``set_pad()`` centering, which ``bbox_inches='tight'`` picks up as
+    whitespace at the bottom of the saved figure.
+    """
+    return list(labels)
+
+
+# ── Axis-scale helpers ────────────────────────────────────────────────────────
+
+def _nice_ceil(x: float) -> float:
+    """Return the smallest value of the form {1, 2, 2.5, 5} × 10^n that is ≥ x."""
+    if x <= 0:
+        return 1.0
+    exp = math.floor(math.log10(x))
+    base = 10.0 ** exp
+    for k in (1.0, 2.0, 2.5, 5.0, 10.0):
+        candidate = k * base
+        if candidate >= x - abs(x) * 1e-9:
+            return candidate
+    return 10.0 * base
+
+
+def _decimal_places(step: float) -> int:
+    """Number of decimal places required to represent *step* without rounding."""
+    for d in range(6):
+        if abs(round(step * 10 ** d) - step * 10 ** d) < 1e-9:
+            return d
+    return 2
+
+
+# ── Label / key helpers ───────────────────────────────────────────────────────
+
+def _split_label_key(text: str) -> Tuple[str, str]:
+    """Split ``'Label (Key)'`` into ``('Label', 'Key')``.
+
+    Returns ``(text, '')`` when the string contains no parenthetical suffix.
+    Used to separate the y-axis title from the short legend key stored in the
+    CSV value-column header, e.g. ``'Average Load Time (Load)'``.
+    """
+    m = re.match(r"^(.*?)\s*\(([^)]+)\)\s*$", text.strip())
+    return (m.group(1).strip(), m.group(2).strip()) if m else (text.strip(), "")
 
 
 # ── Legend drawing ────────────────────────────────────────────────────────────
 
-def _draw_legend(
+def _greedy_rows(
+    labels: List[str],
+    handles: list,
+    cfg: "PlotConfig",
+    font_size: Optional[float] = None,
+) -> List[Tuple[list, List[str]]]:
+    """Greedy bin-packing: pack items left-to-right into as few rows as possible.
+
+    Uses ``_LEGEND_CHAR_WIDTH_FACTOR`` (smaller than the group-label factor)
+    because legend text contains many narrow characters (digits, +, -,
+    parentheses).
+
+    Returns a list of ``(handles_subset, labels_subset)`` ordered top-to-bottom
+    (row 0 = first labels, topmost in the figure).
+    """
+    fs = font_size if font_size is not None else cfg.font_size_pt
+    col_gap = 1.618 * fs
+    available = cfg.width_pt * _AXES_WIDTH_FRACTION
+
+    item_widths = [
+        (0.7 + 0.618) * fs + len(lbl) * fs * _LEGEND_CHAR_WIDTH_FACTOR
+        for lbl in labels
+    ]
+
+    rows: List[Tuple[list, List[str]]] = []
+    cur_h: list = []
+    cur_l: List[str] = []
+    cur_w = 0.0
+
+    for h, lbl, w in zip(handles, labels, item_widths):
+        if not cur_l:
+            cur_h, cur_l, cur_w = [h], [lbl], w
+        elif cur_w + col_gap + w <= available:
+            cur_h.append(h)
+            cur_l.append(lbl)
+            cur_w += col_gap + w
+        else:
+            rows.append((cur_h, cur_l))
+            cur_h, cur_l, cur_w = [h], [lbl], w
+
+    if cur_l:
+        rows.append((cur_h, cur_l))
+
+    return rows
+
+
+def _draw_legend_init(
     fig: Figure,
     ax: Axes,
     colors: List[Tuple[float, float, float]],
     color_labels: List[str],
     mapping_labels: List[str],
     cfg: PlotConfig,
-) -> None:
-    """Draw the legend as a horizontal strip just above the top spine.
+    *,
+    font_size: Optional[float] = None,
+    line_color: Optional[Tuple[float, float, float]] = None,
+    line_legend_key: str = "",
+) -> Tuple[List, int]:
+    """Phase 1 of legend drawing: create all legend artists at y=1.01.
 
-    Layout (golden-ratio proportions, font size = ``fs``):
-      - Swatch side   = fs × 1.0  (square)
-      - Swatch→text   = fs × 0.618
-      - Item spacing  = fs × 1.618  (column gap)
-      - The strip sits just outside the top axes spine, inside the figure.
+    Returns ``(all_legs, n_color_rows)`` where *all_legs* lists every legend
+    artist (color rows first, optional mapping row last) and *n_color_rows*
+    is the count of color-bar rows.
 
-    All color items go on the first row. If long-group-name mapping entries
-    exist they wrap onto a second row.
+    Actual pixel measurement and final repositioning happen in
+    :func:`_finalize_legend_rows`, which must be called after
+    ``fig.tight_layout()`` and ``fig.canvas.draw()``.
     """
-    fs = cfg.font_size_pt
+    fs = font_size if font_size is not None else cfg.font_size_pt
 
     # ── Build handles and labels ──────────────────────────────────────────────
     handles = [
@@ -364,49 +780,100 @@ def _draw_legend(
     ]
     labels = list(color_labels)
 
-    # Main legend: one horizontal row, anchored just above the top spine.
-    # bbox_to_anchor=(0, 1.0) in axes coords = top-left corner of the axes.
-    # loc='lower left' means the bottom-left of the legend box lands there.
-    # A small vertical offset (0.02) gives a 1-line gap between spine and legend.
-    leg = ax.legend(
-        handles,
-        labels,
-        loc="lower right",
-        bbox_to_anchor=(1.0, 1.01),
-        ncol=len(labels),
+    if line_color is not None and line_legend_key:
+        dot_handle = Line2D(
+            [0], [0],
+            marker="o",
+            color="none",
+            markerfacecolor=line_color,
+            markeredgewidth=0,
+            markersize=cfg.font_size_pt * 0.55,
+            linestyle="none",
+        )
+        handles.append(dot_handle)
+        labels.append(line_legend_key)
+
+    # Greedy bin-packing: rows ordered top-to-bottom.
+    rows = _greedy_rows(labels, handles, cfg, font_size=fs)
+    n_color_rows = len(rows)
+
+    legend_kw = dict(
         frameon=False,
         fontsize=fs,
-        # Square swatch: handlelength ≈ handleheight in "em" units (1 em = fs pt).
-        # 0.7 em at 7 pt ≈ 4.9 pt ≈ a small but legible square.
-        handlelength=0.7,
-        handleheight=0.7,
-        handletextpad=0.618,          # gap square→text  = φ⁻¹ × 1 em
-        columnspacing=1.618,          # gap item→item    = φ  × 1 em
+        handlelength=1.0,
+        handleheight=1.0,
+        handletextpad=0.4,
+        columnspacing=0.5,
+        labelspacing=0.0,
         borderpad=0.0,
         borderaxespad=0.0,
     )
 
-    # ── Optional second row: group-number mapping ─────────────────────────────
+    # Stack all rows at y=1.01 (placeholder).  Draw bottom-to-top so the last
+    # ax.legend() call (topmost row) is what tight_layout budgets space for.
+    all_legs: List = []
+    for row_handles, row_labels in reversed(rows):
+        leg = ax.legend(
+            row_handles, row_labels,
+            loc="lower right",
+            bbox_to_anchor=(1.0, 1.01),
+            ncol=len(row_labels),
+            **legend_kw,
+        )
+        all_legs.append(leg)
+    for leg in all_legs[:-1]:
+        ax.add_artist(leg)
+
+    # ── Optional mapping row (circled-number → group name) ────────────────────
     if mapping_labels:
-        from matplotlib.lines import Line2D
         blank = [Line2D([], [], linestyle="none", color="none") for _ in mapping_labels]
-        leg2 = ax.legend(
+        # Provisional position; will be corrected in _finalize_legend_rows.
+        leg_map = ax.legend(
             blank,
             mapping_labels,
             loc="lower right",
-            # Shift up one row above leg; approximation: one line ≈ fs × 1.618 pt
-            bbox_to_anchor=(1.0, 1.01 + (fs * 1.618) / (cfg.height_in * 72.0)),
+            bbox_to_anchor=(1.0, 1.01 + n_color_rows),
             ncol=len(mapping_labels),
             frameon=False,
             fontsize=fs,
             handlelength=0.0,
             handleheight=0.0,
             handletextpad=0.0,
-            columnspacing=1.618,
+            columnspacing=0.5,
+            labelspacing=0.0,
             borderpad=0.0,
             borderaxespad=0.0,
         )
-        ax.add_artist(leg)   # restore first legend (add_artist keeps both)
+        # Preserve topmost color row as an artist so it isn't dropped.
+        ax.add_artist(all_legs[-1])
+        all_legs.append(leg_map)
 
-    # Let tight_layout adjust the axes downward to make room for the strip.
-    fig.tight_layout()
+    return all_legs, n_color_rows
+
+
+def _finalize_legend_rows(
+    ax: Axes,
+    all_legs: List,
+    n_color_rows: int,
+    renderer,
+) -> None:
+    """Measure pixel height of legend rows and reposition them precisely.
+
+    Must be called after ``fig.tight_layout()`` and ``fig.canvas.draw()``.
+    """
+    if not all_legs:
+        return
+
+    ax_height_px  = ax.get_window_extent(renderer).height
+    # Measure the bottommost color row (index 0).
+    leg_height_px = all_legs[0].get_window_extent(renderer).height
+    row_step = leg_height_px / ax_height_px   # axes-fraction units
+
+    for row_idx, leg in enumerate(all_legs[:n_color_rows]):
+        y = 1.01 + row_idx * row_step
+        leg.set_bbox_to_anchor((1.0, y), transform=ax.transAxes)
+
+    # Mapping row sits above all color rows.
+    if len(all_legs) > n_color_rows:
+        y_map = 1.01 + n_color_rows * row_step
+        all_legs[n_color_rows].set_bbox_to_anchor((1.0, y_map), transform=ax.transAxes)

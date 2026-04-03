@@ -10,16 +10,14 @@ PHI_RATIO = 0.6180339887  # 1/φ
 def ablation_palette(
     n: int,
     hue: float = 210.0,
-    l_start: float = 0.72,
-    l_end: float = 0.32,
-    saturation: float = 0.60,
+    l_start: float = 0.85,
+    l_end: float = 0.25,
+    saturation: float = 0.65,
 ) -> List[Tuple[float, float, float]]:
-    """Return ``n`` RGB colors that progressively darken using a φ-based step.
+    """Return ``n`` RGB colors that progressively darken with equal lightness steps.
 
-    The lightness differences between consecutive bars follow a geometric series
-    with ratio ``0.618``, so early bars are close in shade and the final bar
-    anchors the darkest end.  This avoids the "last bar too black" problem of
-    linear spacing while still providing clear visual distinction.
+    Linear spacing ensures every pair of adjacent bars has the same lightness
+    difference, giving uniform visual separation across the whole legend.
 
     Parameters
     ----------
@@ -28,9 +26,11 @@ def ablation_palette(
     hue:
         HSL hue in degrees [0, 360].  Default 210 (cool blue).
     l_start:
-        Lightness of the lightest (first) bar.
+        Lightness of the lightest (first) bar.  0.85 gives a clearly pale tone
+        without washing into near-white.
     l_end:
-        Lightness of the darkest (last) bar.
+        Lightness of the darkest (last) bar.  0.25 gives a clearly dark tone
+        without collapsing into black.
     saturation:
         HSL saturation, constant across all bars.
 
@@ -41,41 +41,14 @@ def ablation_palette(
     if n < 1:
         raise ValueError("n must be at least 1.")
     if n == 1:
-        l_mid = (l_start + l_end) / 2
-        return [_hsl_to_rgb(hue, saturation, l_mid)]
+        return [_hsl_to_rgb(hue, saturation, (l_start + l_end) / 2)]
 
-    lightness_values = _geometric_lightness(n, l_start, l_end)
+    lightness_values = [
+        l_start - i * (l_start - l_end) / (n - 1)
+        for i in range(n)
+    ]
+    lightness_values = [max(0.05, min(0.95, l)) for l in lightness_values]
     return [_hsl_to_rgb(hue, saturation, l) for l in lightness_values]
-
-
-def _geometric_lightness(
-    n: int,
-    l_start: float,
-    l_end: float,
-) -> List[float]:
-    """Build lightness values with φ-ratio geometric step sizes.
-
-    Step sizes satisfy:  Δ_i = base_step × φ_ratio^(n-1-i)
-    so the largest single step is at the end (i → n-1), and steps shrink
-    going backwards.  Total span = l_start − l_end.
-    """
-    total = l_start - l_end
-    # Sum of geometric series: base_step × (1 - r^n) / (1 - r)
-    # Solve for base_step given the total.
-    r = PHI_RATIO
-    if abs(r - 1.0) < 1e-12 or n == 1:
-        base_step = total / (n - 1) if n > 1 else total
-    else:
-        geo_sum = (1.0 - r ** n) / (1.0 - r)
-        base_step = total / geo_sum
-
-    lightness: List[float] = [l_start]
-    for i in range(n - 1):
-        step = base_step * (r ** (n - 2 - i))
-        lightness.append(lightness[-1] - step)
-
-    # Clamp to valid range
-    return [max(0.05, min(0.95, l)) for l in lightness]
 
 
 def _hsl_to_rgb(

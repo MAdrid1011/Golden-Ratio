@@ -23,6 +23,8 @@ class PlotConfig:
 
     # ── I/O ──────────────────────────────────────────────────────────────────
     input: str = ""
+    # Optional secondary CSV for a line chart overlaid on the right y-axis.
+    input_line: str = ""
     output: str = "out/figure"          # base path, no extension
     mode: str = "ablation"
     # Output formats to produce in a single run.  Any of: pdf, png, svg, eps.

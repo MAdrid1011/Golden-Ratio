@@ -22,6 +22,7 @@ class AblationData:
     labels: List[str] = field(default_factory=list)
     data: Dict[Tuple[str, str], float] = field(default_factory=dict)
     value_label: str = "value"
+    caption: str = ""
 
     @property
     def n_groups(self) -> int:
@@ -67,10 +68,17 @@ def read_csv(path: str | Path) -> AblationData:
         _validate_fieldnames(reader.fieldnames)
         value_col = _detect_value_column(reader.fieldnames)
 
+        caption = ""
         for i, row in enumerate(reader, start=2):
             group = row["group"].strip()
             label = row["label"].strip()
             raw_value = row[value_col].strip()
+
+            # Metadata rows: group starts with "__" (e.g. "__caption__")
+            if group.startswith("__"):
+                if group == "__caption__":
+                    caption = raw_value
+                continue
 
             if not group or not label:
                 raise ValueError(f"Row {i}: 'group' and 'label' must not be empty.")
@@ -99,6 +107,7 @@ def read_csv(path: str | Path) -> AblationData:
         labels=labels_seen,
         data=data,
         value_label=value_col,
+        caption=caption,
     )
 
 

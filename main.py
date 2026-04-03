@@ -30,8 +30,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # ── I/O ──────────────────────────────────────────────────────────────────
-    p.add_argument("--input", required=True, metavar="CSV",
-                   help="Path to the input CSV file.")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--input", metavar="CSV",
+                   help="Path to a single bar-chart CSV file.")
+    g.add_argument("--inputs", nargs="+", metavar="CSV",
+                   help="Two or more CSV files to render as vertically stacked "
+                        "sub-panels in one figure.  Each CSV may contain a "
+                        "``__caption__`` metadata row for its panel label.")
+    p.add_argument("--input_line", default="", metavar="CSV",
+                   help="Optional path to a secondary CSV for a line chart on "
+                        "the right y-axis.  Same group/label structure as --input.")
     p.add_argument("--output", default="out/figure", metavar="BASEPATH",
                    help="Output base path without extension (e.g. out/fig1).")
     p.add_argument("--formats", nargs="+", default=["pdf", "png"],
@@ -85,7 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     config = PlotConfig(
-        input=args.input,
+        input=args.input or "",
+        input_line=args.input_line,
         output=args.output,
         formats=args.formats,
         mode=args.mode,
@@ -101,15 +110,19 @@ def main(argv: list[str] | None = None) -> int:
         custom_palette=args.palette,
     )
 
-    data = read_csv(config.input)
-
     if config.mode == "ablation":
         renderer = AblationRenderer(config)
     else:
         print(f"Unknown mode: {config.mode!r}", file=sys.stderr)
         return 1
 
-    renderer.render(data)
+    if args.inputs:
+        datasets = [read_csv(f) for f in args.inputs]
+        renderer.render_panels(datasets)
+    else:
+        data = read_csv(config.input)
+        renderer.render(data)
+
     for path in getattr(renderer, "_saved_paths", [config.output]):
         print(f"Saved → {path}")
     return 0
