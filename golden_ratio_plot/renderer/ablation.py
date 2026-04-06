@@ -288,7 +288,7 @@ class AblationRenderer(BaseRenderer):
             )
             ax2.set_ylim(0.0, r_max_prov)
             ax2.set_yticks(r_ticks_prov)
-            ax2.set_ylabel(line_y_label, fontsize=cfg.font_size_pt)
+            ax2.set_ylabel(line_y_label, fontsize=max(xlbl_fontsize, cfg.font_size_pt))
             ax2.tick_params(
                 axis="y", which="major",
                 direction="out",
@@ -322,7 +322,7 @@ class AblationRenderer(BaseRenderer):
 
         # ── Axis labels ───────────────────────────────────────────────────────
         left_y_label, _ = _split_label_key(data.value_label)
-        ax.set_ylabel(left_y_label, fontsize=cfg.font_size_pt)
+        ax.set_ylabel(left_y_label, fontsize=max(xlbl_fontsize, cfg.font_size_pt))
 
         # ── Subfigure caption (below x-axis tick labels) ──────────────────────
         if data.caption:
@@ -760,7 +760,7 @@ def _draw_legend_init(
             color="none",
             markerfacecolor=line_color,
             markeredgewidth=0,
-            markersize=cfg.font_size_pt * 0.55,
+            markersize=fs * 0.55,
             linestyle="none",
         )
         handles.append(dot_handle)

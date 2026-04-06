@@ -168,6 +168,17 @@ class DecompRenderer(BaseRenderer):
 
         ax.set_ylim(axis_min, axis_max)
         ax.set_yticks(ticks)
+
+        # ── Horizontal gridlines (same style as ablation) ────────────────────
+        ax.set_axisbelow(True)
+        ax.yaxis.grid(
+            True,
+            linestyle="--",
+            linewidth=0.5,
+            color="#CCCCCC",
+            zorder=0,
+        )
+
         ax.yaxis.set_major_formatter(
             mticker.FuncFormatter(
                 lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}"

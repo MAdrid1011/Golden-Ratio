@@ -6,9 +6,9 @@ from typing import List, Optional
 PHI = 1.6180339887  # golden ratio
 PT_PER_INCH = 72.0
 
-# Default figure height = single-column width × (1/φ).
-# Wide figures (e.g. double-column) share this same height so they stay compact.
-_DEFAULT_HEIGHT_PT = 240.0 / PHI   # ≈ 148.3 pt
+# Default figure heights for ablation and decomp charts.
+_DEFAULT_HEIGHT_SINGLE_PT = 120.0          # single-column (≤ 240 pt wide)
+_DEFAULT_HEIGHT_WIDE_PT   = 240.0 / PHI   # double-column (> 240 pt wide) ≈ 148 pt
 
 
 @dataclass
@@ -82,5 +82,9 @@ class PlotConfig:
     def height_in(self) -> float:
         if self.height_pt is not None:
             return self.height_pt / PT_PER_INCH
-        return _DEFAULT_HEIGHT_PT / PT_PER_INCH  # fixed ≈ 148 pt for all widths
+        # Single-column (≤ 240 pt): compact 120 pt height.
+        # Double-column (> 240 pt): golden-ratio height ≈ 148 pt.
+        if self.width_pt <= 240.0:
+            return _DEFAULT_HEIGHT_SINGLE_PT / PT_PER_INCH
+        return _DEFAULT_HEIGHT_WIDE_PT / PT_PER_INCH
 
