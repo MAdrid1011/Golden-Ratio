@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Dict, List, Tuple  # Tuple kept for _segment_colors return type
 
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -31,6 +32,7 @@ from golden_ratio_plot.reader import DecompData
 from golden_ratio_plot.renderer.ablation import _group_labels
 from golden_ratio_plot.renderer.base import BaseRenderer
 from golden_ratio_plot.utils.colors import ablation_palette
+from golden_ratio_plot.utils.colors import palette_from_config
 from golden_ratio_plot.utils.labels import AXES_WIDTH_FRACTION as _AXES_WIDTH_FRACTION
 from golden_ratio_plot.utils.labels import vcenter_xticklabels as _vcenter_xticklabels
 from golden_ratio_plot.utils.legend import (
@@ -93,7 +95,30 @@ def _segment_colors(
 class DecompRenderer(BaseRenderer):
     """Grouped stacked bar chart for comparison + decomposition."""
 
-    def _draw(self, fig: Figure, ax: Axes, data: DecompData) -> None:
+    def render_panels(self, datasets: List[DecompData]) -> None:
+        """Render vertically stacked decomp panels."""
+        if not datasets:
+            return
+        cfg = self.config
+        self._apply_rcparams()
+        n = len(datasets)
+        total_h_in = cfg.height_in * (1.0 + 0.16 * n)
+        fig = plt.figure(figsize=(cfg.width_in, total_h_in))
+        axes = [fig.add_subplot(n, 1, i + 1) for i in range(n)]
+        for idx, ax in enumerate(axes):
+            self._configure_spines(ax)
+            self._configure_ticks(ax)
+            self._draw(fig, ax, datasets[idx], finalize=False)
+        fig.tight_layout(h_pad=1.0 / cfg.font_size_pt, pad=0.3)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        for ax in axes:
+            legs = getattr(ax, "_golden_ratio_legend_rows", [])
+            _finalize_legend_rows(ax, legs, len(legs), renderer)
+        self._save(fig)
+        plt.close(fig)
+
+    def _draw(self, fig: Figure, ax: Axes, data: DecompData, finalize: bool = True) -> None:
         cfg = self.config
         fs  = cfg.font_size_pt
         lfs = cfg.label_font_size
@@ -105,8 +130,11 @@ class DecompRenderer(BaseRenderer):
 
         # ── Resolve x-axis label font size early (needed for y-axis too) ──
         cell_width_pt = cfg.width_pt * _AXES_WIDTH_FRACTION / n_groups
+        x_groups = data.groups
+        if cfg.two_level_xaxis and data.minor_group:
+            x_groups = [data.minor_group.get(g, g) for g in data.groups]
         _, group_display, _, xlbl_fs = _group_labels(
-            data.groups, cell_width_pt, lfs
+            x_groups, cell_width_pt, lfs
         )
 
         # ── Layout (golden-ratio spacing) ──────────────────────────────────
@@ -128,9 +156,10 @@ class DecompRenderer(BaseRenderer):
 
         # ── Draw stacked bars ───────────────────────────────────────────────
         y_max_data = 0.0
+        custom_colors = palette_from_config(n_bars, cfg.custom_palette, cfg.palette_hue)
         for b_idx, bar in enumerate(data.bars):
             segs   = data.segments.get(bar, [""])
-            colors = _segment_colors(b_idx, n_bars, len(segs))
+            colors = [custom_colors[b_idx]] if len(segs) == 1 and segs[0] == "" else _segment_colors(b_idx, n_bars, len(segs))
             for g in data.groups:
                 cx     = centers[(g, bar)]
                 bottom = 0.0
@@ -141,7 +170,7 @@ class DecompRenderer(BaseRenderer):
                            edgecolor="black", linewidth=0.5)
                     bottom += val
                 y_max_data = max(y_max_data, bottom)
-                if bottom > 0:
+                if cfg.show_values and bottom > 0:
                     ax.text(
                         cx, bottom, f"{bottom:.1f}",
                         ha="center", va="bottom",
@@ -201,9 +230,20 @@ class DecompRenderer(BaseRenderer):
         # Vertically centre short labels within the tallest (multi-line) row.
         _vcenter_xticklabels(ax, xlbl_fs)
 
+        if cfg.two_level_xaxis and data.major_group:
+            _draw_parent_xlabels(
+                ax, data.groups, group_centers, data.major_group,
+                fontsize=xlbl_fs, y=-0.22
+            )
+
         # ── Group separators when n_bars > 2 ────────────────────────────────
         if n_bars > 2:
             for i in range(n_groups - 1):
+                if cfg.two_level_xaxis and data.major_group:
+                    left_parent = data.major_group.get(data.groups[i], data.groups[i])
+                    right_parent = data.major_group.get(data.groups[i + 1], data.groups[i + 1])
+                    if left_parent == right_parent:
+                        continue
                 cx_last = centers[(data.groups[i],     data.bars[-1])]
                 cx_next = centers[(data.groups[i + 1], data.bars[0])]
                 sep_x   = (cx_last + bar_w / 2.0 + cx_next - bar_w / 2.0) / 2.0
@@ -214,7 +254,7 @@ class DecompRenderer(BaseRenderer):
         labels:  List[str]            = []
         for b_idx, bar in enumerate(data.bars):
             segs   = data.segments.get(bar, [""])
-            colors = _segment_colors(b_idx, n_bars, len(segs))
+            colors = [custom_colors[b_idx]] if len(segs) == 1 and segs[0] == "" else _segment_colors(b_idx, n_bars, len(segs))
             if len(segs) == 1 and segs[0] == "":
                 handles.append(
                     mpatches.Patch(facecolor=colors[0], edgecolor="black", linewidth=0.4)
@@ -228,15 +268,57 @@ class DecompRenderer(BaseRenderer):
                     labels.append(seg)
 
         # Use full figure width for row packing (short labels fit in one row).
+        if data.legend_note:
+            handles.append(mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0))
+            labels.append(data.legend_note)
         rows = _greedy_rows_util(labels, handles, cfg.width_pt, xlbl_fs)
         all_legs = _stack_legend_rows(ax, rows, xlbl_fs)
+        setattr(ax, "_golden_ratio_legend_rows", all_legs)
 
         # ── Caption ─────────────────────────────────────────────────────────
         if data.caption:
-            ax.set_xlabel(data.caption, fontsize=fs + 1, labelpad=2, color="black")
+            ax.set_xlabel(
+                data.caption,
+                fontsize=fs + 1,
+                labelpad=10 if cfg.two_level_xaxis else 2,
+                color="black",
+            )
 
         # ── Finalise layout and legend row positions ─────────────────────────
-        fig.tight_layout(pad=0.3)
-        fig.canvas.draw()
-        renderer = fig.canvas.get_renderer()
-        _finalize_legend_rows(ax, all_legs, len(rows), renderer)
+        if finalize:
+            fig.tight_layout(pad=0.3)
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            _finalize_legend_rows(ax, all_legs, len(rows), renderer)
+
+
+def _draw_parent_xlabels(
+    ax: Axes,
+    groups: List[str],
+    group_centers: List[float],
+    parent_map: Dict[str, str],
+    *,
+    fontsize: float,
+    y: float,
+) -> None:
+    if not groups:
+        return
+    start = 0
+    current = parent_map.get(groups[0], groups[0])
+    trans = ax.get_xaxis_transform()
+    for i in range(1, len(groups) + 1):
+        parent = parent_map.get(groups[i], groups[i]) if i < len(groups) else None
+        if parent != current:
+            cx = (group_centers[start] + group_centers[i - 1]) / 2.0
+            ax.text(
+                cx, y, current,
+                transform=trans,
+                ha="center",
+                va="top",
+                fontsize=fontsize,
+                fontweight="bold",
+                clip_on=False,
+            )
+            if i < len(groups):
+                start = i
+                current = parent_map.get(groups[i], groups[i])

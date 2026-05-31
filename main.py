@@ -18,10 +18,11 @@ import sys
 from golden_ratio_plot.config import PlotConfig
 from golden_ratio_plot.reader import read_csv, read_decomp_csv, read_sensitivity_csv
 from golden_ratio_plot.renderer.ablation import AblationRenderer
+from golden_ratio_plot.renderer.compose import ComposeRenderer
 from golden_ratio_plot.renderer.decomp import DecompRenderer
 from golden_ratio_plot.renderer.sensitivity import SensitivityRenderer
 
-_MODES = ("ablation", "decomp", "sensitivity")
+_MODES = ("ablation", "decomp", "sensitivity", "compose")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,6 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
     # ── Display options ───────────────────────────────────────────────────────
     p.add_argument("--show_values", action="store_true",
                    help="Print numeric values on top of each bar.")
+    p.add_argument("--two_level_xaxis", action="store_true",
+                   help="Use major_group/minor_group CSV columns for two-level x-axis labels.")
     p.add_argument("--font_size_pt", type=float, default=7.0,
                    help="Tick-label and legend font size in pt (ACM minimum: 7).")
     p.add_argument("--label_font_size_pt", type=float, default=None,
@@ -112,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         y_min=args.y_min,
         y_max=args.y_max,
         show_values=args.show_values,
+        two_level_xaxis=args.two_level_xaxis,
         palette_hue=args.palette_hue,
         custom_palette=args.palette,
     )
@@ -134,9 +138,11 @@ def main(argv: list[str] | None = None) -> int:
     elif config.mode == "decomp":
         renderer = DecompRenderer(config)
         if args.inputs:
-            parser.error("--mode decomp currently supports only a single --input.")
-        data = read_decomp_csv(config.input)
-        renderer.render(data)
+            datasets = [read_decomp_csv(f) for f in args.inputs]
+            renderer.render_panels(datasets)
+        else:
+            data = read_decomp_csv(config.input)
+            renderer.render(data)
 
     elif config.mode == "sensitivity":
         renderer = SensitivityRenderer(config)
@@ -145,6 +151,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             datasets = [read_sensitivity_csv(config.input)]
         renderer.render_sensitivity(datasets)
+
+    elif config.mode == "compose":
+        if args.inputs:
+            parser.error("--mode compose expects a single --input JSON file.")
+        renderer = ComposeRenderer(config)
+        renderer.render_compose(config.input)
 
     else:
         print(f"Unknown mode: {config.mode!r}", file=sys.stderr)

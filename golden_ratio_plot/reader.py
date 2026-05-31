@@ -23,6 +23,8 @@ class AblationData:
     data: Dict[Tuple[str, str], float] = field(default_factory=dict)
     value_label: str = "value"
     caption: str = ""
+    major_group: Dict[str, str] = field(default_factory=dict)
+    minor_group: Dict[str, str] = field(default_factory=dict)
 
     @property
     def n_groups(self) -> int:
@@ -67,8 +69,13 @@ def read_csv(path: str | Path) -> AblationData:
         reader = csv.DictReader(fh)
         _validate_fieldnames(reader.fieldnames)
         value_col = _detect_value_column(reader.fieldnames)
+        fieldnames = reader.fieldnames or []
+        has_major = "major_group" in fieldnames
+        has_minor = "minor_group" in fieldnames
 
         caption = ""
+        major_group: Dict[str, str] = {}
+        minor_group: Dict[str, str] = {}
         for i, row in enumerate(reader, start=2):
             group = row["group"].strip()
             label = row["label"].strip()
@@ -94,6 +101,10 @@ def read_csv(path: str | Path) -> AblationData:
                 groups_seen.append(group)
             if label not in labels_seen:
                 labels_seen.append(label)
+            if has_major:
+                major_group[group] = row.get("major_group", "").strip() or group
+            if has_minor:
+                minor_group[group] = row.get("minor_group", "").strip() or group
 
             key = (group, label)
             if key in data:
@@ -108,6 +119,8 @@ def read_csv(path: str | Path) -> AblationData:
         data=data,
         value_label=value_col,
         caption=caption,
+        major_group=major_group,
+        minor_group=minor_group,
     )
 
 
@@ -324,6 +337,9 @@ class DecompData:
     values: Dict[Tuple[str, str, str], float] = field(default_factory=dict)
     y_label: str = "value"
     caption: str = ""
+    legend_note: str = ""
+    major_group: Dict[str, str] = field(default_factory=dict)
+    minor_group: Dict[str, str] = field(default_factory=dict)
 
 
 def read_decomp_csv(path: "str | Path") -> DecompData:
@@ -343,30 +359,41 @@ def read_decomp_csv(path: "str | Path") -> DecompData:
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         fields = reader.fieldnames or []
-        if len(fields) < 4:
-            raise ValueError(
-                f"decomp CSV needs ≥ 4 columns (group, bar, segment, metric): {path}"
-            )
+        lower_to_name = {f.strip().lower(): f for f in fields}
+        if "group" not in lower_to_name or "bar" not in lower_to_name:
+            raise ValueError(f"decomp CSV needs at least 'group' and 'bar': {path}")
 
-        group_col = fields[0]
-        bar_col   = fields[1]
-        seg_col   = fields[2]
-        y_col     = fields[3]
+        group_col = lower_to_name["group"]
+        bar_col   = lower_to_name["bar"]
+        seg_col   = lower_to_name.get("segment", "")
+        major_col = lower_to_name.get("major_group", "")
+        minor_col = lower_to_name.get("minor_group", "")
+        reserved = {"group", "major_group", "minor_group", "bar", "bar_group", "segment"}
+        value_cols = [f for f in fields if f.strip().lower() not in reserved]
+        if not value_cols:
+            raise ValueError(f"decomp CSV needs one metric column: {path}")
+        y_col = value_cols[0]
 
         groups_seen: List[str] = []
         bars_seen:   List[str] = []
         segs: Dict[str, List[str]] = {}
         values: Dict[Tuple[str, str, str], float] = {}
         caption = ""
+        legend_note = ""
+        major_group: Dict[str, str] = {}
+        minor_group: Dict[str, str] = {}
 
         for row in reader:
             grp     = (row.get(group_col) or "").strip()
             bar     = (row.get(bar_col)   or "").strip()
-            seg     = (row.get(seg_col)   or "").strip()
+            seg     = (row.get(seg_col)   or "").strip() if seg_col else ""
             val_raw = (row.get(y_col)     or "").strip()
 
             if grp == "__caption__":
                 caption = next((v for v in [bar, seg, val_raw] if v), "")
+                continue
+            if grp == "__legend__":
+                legend_note = next((v for v in [bar, seg, val_raw] if v), "")
                 continue
 
             if not grp or not bar:
@@ -385,6 +412,10 @@ def read_decomp_csv(path: "str | Path") -> DecompData:
                 segs[bar] = []
             if seg not in segs[bar]:
                 segs[bar].append(seg)
+            if major_col:
+                major_group[grp] = (row.get(major_col) or "").strip() or grp
+            if minor_col:
+                minor_group[grp] = (row.get(minor_col) or "").strip() or grp
 
             values[(grp, bar, seg)] = val
 
@@ -395,6 +426,9 @@ def read_decomp_csv(path: "str | Path") -> DecompData:
         values=values,
         y_label=y_col,
         caption=caption,
+        legend_note=legend_note,
+        major_group=major_group,
+        minor_group=minor_group,
     )
 
 
@@ -418,7 +452,7 @@ def _detect_value_column(fieldnames: list[str]) -> str:
     The column name is used verbatim as the y-axis label, so you can write
     the unit directly in the header, e.g. ``Accuracy (%)`` or ``Speedup (×)``.
     """
-    reserved = {"group", "label"}
+    reserved = {"group", "major_group", "minor_group", "label"}
     value_cols = [f for f in fieldnames if f.strip().lower() not in reserved]
     if not value_cols:
         raise ValueError(

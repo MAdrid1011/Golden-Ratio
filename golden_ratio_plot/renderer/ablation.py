@@ -198,8 +198,11 @@ class AblationRenderer(BaseRenderer):
 
         # ── Determine group label display mode ────────────────────────────────
         cell_width_pt = cfg.width_pt * _AXES_WIDTH_FRACTION / data.n_groups
+        x_groups = data.groups
+        if cfg.two_level_xaxis and data.minor_group:
+            x_groups = [data.minor_group.get(g, g) for g in data.groups]
         use_circled, group_display, rotation_angle, xlbl_fontsize = _group_labels(
-            data.groups, cell_width_pt, cfg.label_font_size
+            x_groups, cell_width_pt, cfg.label_font_size
         )
 
         # ── Compute bar positions ─────────────────────────────────────────────
@@ -311,13 +314,27 @@ class AblationRenderer(BaseRenderer):
         ax.set_xlim(0.0, data.n_groups * cell_width)
 
         # ── Vertical group separators ─────────────────────────────────────────
-        for sx in separator_xs:
+        if cfg.two_level_xaxis and data.major_group:
+            separator_draw = [
+                sx for i, sx in enumerate(separator_xs)
+                if data.major_group.get(data.groups[i], data.groups[i])
+                != data.major_group.get(data.groups[i + 1], data.groups[i + 1])
+            ]
+        else:
+            separator_draw = separator_xs
+        for sx in separator_draw:
             ax.axvline(
                 x=sx,
                 color="black",
                 linewidth=cfg.spine_linewidth_pt,
                 linestyle="-",
                 zorder=3,
+            )
+
+        if cfg.two_level_xaxis and data.major_group:
+            _draw_parent_xlabels(
+                ax, data.groups, group_centers, data.major_group,
+                fontsize=xlbl_fontsize, y=-0.22
             )
 
         # ── Axis labels ───────────────────────────────────────────────────────
@@ -329,7 +346,7 @@ class AblationRenderer(BaseRenderer):
             ax.set_xlabel(
                 data.caption,
                 fontsize=xlbl_fontsize + 1,
-                labelpad=0.5,
+                labelpad=10.0 if cfg.two_level_xaxis else 0.5,
             )
 
         # ── Legend — phase 1: create rows at initial y=1.01 ──────────────────
@@ -474,6 +491,39 @@ def _compute_positions(
             separator_xs.append(cell_start + cell)
 
     return all_positions, group_centers, separator_xs, cell
+
+
+def _draw_parent_xlabels(
+    ax: Axes,
+    groups: List[str],
+    group_centers: List[float],
+    parent_map: Dict[str, str],
+    *,
+    fontsize: float,
+    y: float,
+) -> None:
+    """Draw parent labels centered under consecutive child groups."""
+    if not groups:
+        return
+    start = 0
+    current = parent_map.get(groups[0], groups[0])
+    trans = ax.get_xaxis_transform()
+    for i in range(1, len(groups) + 1):
+        parent = parent_map.get(groups[i], groups[i]) if i < len(groups) else None
+        if parent != current:
+            cx = (group_centers[start] + group_centers[i - 1]) / 2.0
+            ax.text(
+                cx, y, current,
+                transform=trans,
+                ha="center",
+                va="top",
+                fontsize=fontsize,
+                fontweight="bold",
+                clip_on=False,
+            )
+            if i < len(groups):
+                start = i
+                current = parent_map.get(groups[i], groups[i])
 
 
 # ── Group label helpers ───────────────────────────────────────────────────────

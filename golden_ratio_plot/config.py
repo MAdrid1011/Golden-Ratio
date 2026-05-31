@@ -62,6 +62,7 @@ class PlotConfig:
 
     # ── Bar display ──────────────────────────────────────────────────────────
     show_values: bool = False             # print numeric value above each bar
+    two_level_xaxis: bool = False         # use major_group/minor_group CSV columns
 
     # ── Colors ───────────────────────────────────────────────────────────────
     # Custom palette: list of hex/CSS color strings, one per unique label.
@@ -87,4 +88,3 @@ class PlotConfig:
         if self.width_pt <= 240.0:
             return _DEFAULT_HEIGHT_SINGLE_PT / PT_PER_INCH
         return _DEFAULT_HEIGHT_WIDE_PT / PT_PER_INCH
-
