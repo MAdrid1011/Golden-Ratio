@@ -1,0 +1,42 @@
+{
+  "layout": { "rows": 1, "cols": 1 },
+  "panels": [
+    {
+      "row": 0,
+      "col": 0,
+      "type": "timeline",
+      "csv": "compose_timeline.csv",
+      "time_col": "time",
+      "state_col": "pim_active",
+      "inactive_background": "#F7F9FB",
+      "active_background": "#F6E8E8",
+      "tracks": [
+        {
+          "column": "npu_util",
+          "ylabel": "NPU (%)",
+          "legend_label": "NPU",
+          "color": "#315A7D",
+          "fill_alpha": 0.14,
+          "active_fill_color": "#E99898",
+          "active_fill_alpha": 0.35,
+          "annotate_averages": true,
+          "active_average_color": "#B23B3B",
+          "y": { "min": 0, "max": 100, "ticks": [0, 50, 100] }
+        },
+        {
+          "column": "pim_util",
+          "ylabel": "PIM (%)",
+          "legend_label": "PIM",
+          "color": "#4B8A6B",
+          "fill_alpha": 0.14,
+          "annotate_averages": true,
+          "active_average_color": "#B23B3B",
+          "y": { "min": 0, "max": 100, "ticks": [0, 50, 100] }
+        }
+      ],
+      "legend": { "state_label": "PIM active", "ncol": 3 },
+      "x_ticks": [0, 3, 6, 9, 12],
+      "caption": "(a)"
+    }
+  ]
+}

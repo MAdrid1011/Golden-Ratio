@@ -1,0 +1,7 @@
+model,algorithm,NPU,PIM
+OPT,SpecDec++,43,34
+OPT,SVIP,48,38
+OPT,AdaEDL,45,36
+LLaMA2,SpecDec++,51,31
+LLaMA2,SVIP,46,36
+LLaMA2,AdaEDL,42,40

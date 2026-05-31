@@ -1,0 +1,9 @@
+group,label,major_group,minor_group,Throughput
+OPT-SpecDec,NPU,OPT,SpecDec++,1.1
+OPT-SpecDec,PIM,OPT,SpecDec++,2.2
+OPT-SVIP,NPU,OPT,SVIP,1.0
+OPT-SVIP,PIM,OPT,SVIP,2.0
+LLaMA-SpecDec,NPU,LLaMA2,SpecDec++,1.2
+LLaMA-SpecDec,PIM,LLaMA2,SpecDec++,2.8
+LLaMA-SVIP,NPU,LLaMA2,SVIP,1.1
+LLaMA-SVIP,PIM,LLaMA2,SVIP,2.5

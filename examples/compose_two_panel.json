@@ -1,0 +1,74 @@
+{
+  "layout": { "rows": 2, "cols": 1 },
+  "panels": [
+    {
+      "row": 0,
+      "col": 0,
+      "type": "bar",
+      "bar_mode": "grouped",
+      "csv": "compose_grouped.csv",
+      "x": { "parent_col": "model", "child_col": "algorithm" },
+      "series": [
+        { "label": "NPU", "column": "NPU" },
+        { "label": "PIM", "column": "PIM" }
+      ],
+      "colors": ["#9FC5D9", "#6C9FB8"],
+      "two_level_xaxis": {
+        "boundary_lines": true
+      },
+      "bar_layout": {
+        "bar_width": 0.74,
+        "intra_gap": 0.0,
+        "inter_gap": 0.56,
+        "parent_gap": 1.0
+      },
+      "y": {
+        "label": "Stall Ratio (%)",
+        "min": 0,
+        "max": 100,
+        "ticks": [0, 25, 50, 75, 100]
+      },
+      "legend": { "ncol": 2 },
+      "caption": "(a)"
+    },
+    {
+      "row": 1,
+      "col": 0,
+      "type": "bar",
+      "bar_mode": "stacked",
+      "csv": "compose_stacked.csv",
+      "x": { "col": "iter", "show_every": "odd" },
+      "segments": [
+        { "label": "NPU Latency Ratio", "column": "NPU" },
+        { "label": "PIM Latency Ratio", "column": "PIM" }
+      ],
+      "colors": ["#9FC5D9", "#D6E6EF"],
+      "right_axis_line": {
+        "label": "Draft Length",
+        "column": "Draft Length",
+        "color": "#D84A4A",
+        "linestyle": "--",
+        "marker": "o",
+        "markerfacecolor": "white",
+        "y_min": 0,
+        "y_max": 30,
+        "y_ticks": [0, 10, 20, 30]
+      },
+      "axis_arrow": {
+        "label": "iter",
+        "x_start": 0.98,
+        "x_end": 1.03,
+        "label_x": 1.04
+      },
+      "y": {
+        "label": "Break Down",
+        "min": 0,
+        "max": 1,
+        "ticks": [0, 0.25, 0.5, 0.75, 1.0],
+        "ticklabels": ["0", "0.25", "0.50", "0.75", "1.00"]
+      },
+      "legend": { "ncol": 3, "columnspacing": 0.28 },
+      "caption": "(b)"
+    }
+  ]
+}
