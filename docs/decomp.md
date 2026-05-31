@@ -12,6 +12,11 @@ Decomp mode generates a grouped bar chart where each x-axis group has **n_bars**
 python main.py --mode decomp \
   --input examples/decomp_pipeline.csv \
   --output out/Decomp_pipeline
+
+# Multiple vertically stacked decomposition panels
+python main.py --mode decomp \
+  --inputs panel_a.csv panel_b.csv \
+  --output out/Decomp_panels
 ```
 
 ---
@@ -30,6 +35,14 @@ group, bar, segment, Metric Name
 | `bar` | Bar name within the group — the **comparison** dimension. |
 | `segment` | Stack segment name. Leave **empty** for a solid (unsegmented) bar. |
 | *(col 4 name)* | Numeric value. The column header becomes the y-axis label. |
+
+Optional columns:
+
+| Column | Role |
+|--------|------|
+| `major_group` | Parent label for `--two_level_xaxis`. |
+| `minor_group` | Child label for `--two_level_xaxis`. |
+| `bar_group` | Reserved for grouped bar metadata. |
 
 **Rules**
 - Every `(group, bar)` must appear at least once.
@@ -84,6 +97,14 @@ __caption__,,,(a) Per-scene Pipeline Cost
 ```
 
 Caption text in any non-group column; displayed below the x-axis tick labels, 1 pt larger than the tick-label font.
+
+### `__legend__` metadata row
+
+Use `__legend__` to append a short note to the legend, such as algorithm index mappings.
+
+```csv
+__legend__,,,(1) SpecDec++  (2) SVIP
+```
 
 ---
 
@@ -148,6 +169,7 @@ Entries are arranged in as many columns as fit in a single legend row at the top
 |------|---------|-------------|
 | `--mode decomp` | — | **Required.** |
 | `--input CSV` | — | Path to the decomp CSV. |
+| `--inputs CSV …` | — | One CSV per vertically stacked panel. |
 | `--output PATH` | `out/figure` | Base path (no extension). |
 | `--formats fmt …` | `pdf png` | Output formats. |
 | `--width_pt` | `240` | Figure width in pt. |
@@ -155,6 +177,7 @@ Entries are arranged in as many columns as fit in a single legend row at the top
 | `--y_ticks` | `5` | Target number of y-axis ticks. |
 | `--y_min` | `0` | Override y-axis lower bound. |
 | `--y_max` | *(auto)* | Override y-axis upper bound. |
+| `--two_level_xaxis` | off | Use `major_group` and `minor_group` columns for parent/child x-axis labels. |
 
 ---
 

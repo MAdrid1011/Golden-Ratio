@@ -29,6 +29,10 @@ python main.py --inputs panel_a.csv panel_b.csv \
                --input_lines line_a.csv line_b.csv \
                --output out/fig_dual_panels
 
+# Two-level x-axis labels from major_group/minor_group columns
+python main.py --input examples/ablation_two_level.csv \
+               --two_level_xaxis --output out/fig_two_level
+
 # Custom palette and 8 y-axis ticks
 python main.py --input examples/ablation_example_single.csv \
                --palette "#3A7FC1" "#E87D3A" "#6DBF67" \
@@ -50,6 +54,13 @@ group,label,Metric Name
 | `group` | X-axis tick label. Spaces are word-separators for adaptive wrapping (see below). |
 | `label` | Variant name (bar color, legend entry). Must be **identical across all groups**. |
 | *(any name)* | Numeric measurement. The column header is used verbatim as the y-axis label — include units here, e.g. `FPS`, `PSNR (dB)`, `Speedup (×)`. |
+
+Optional columns:
+
+| Column | Role |
+|--------|------|
+| `major_group` | Parent label for a two-level x-axis. Consecutive groups with the same parent are merged under one bold label. |
+| `minor_group` | Child label for a two-level x-axis. This replaces the normal `group` tick text when `--two_level_xaxis` is enabled. |
 
 **Example:**
 
@@ -77,6 +88,20 @@ __caption__,,(a) Ablation on 4DGS
 ```
 
 The caption is rendered below the x-axis tick labels, 1 pt larger than the tick-label font, with 2 pt of padding.
+
+### Two-level x-axis
+
+Use `--two_level_xaxis` when each x position needs both a child label and a parent label. The renderer reads `minor_group` for the tick label nearest the axis and `major_group` for the lower parent label. Parent boundary lines are drawn only where the parent changes.
+
+```csv
+group,label,major_group,minor_group,Throughput
+OPT-SpecDec,NPU,OPT,SpecDec++,1.1
+OPT-SpecDec,PIM,OPT,SpecDec++,2.2
+OPT-SVIP,NPU,OPT,SVIP,1.0
+OPT-SVIP,PIM,OPT,SVIP,2.0
+LLaMA-SpecDec,NPU,LLaMA2,SpecDec++,1.2
+LLaMA-SpecDec,PIM,LLaMA2,SpecDec++,2.8
+```
 
 ---
 
@@ -144,6 +169,7 @@ The right axis uses the same tick-count target (`--y_ticks`) as the left axis an
 | `--y_min` | `0` | Override y-axis lower bound. |
 | `--y_max` | *(auto)* | Override y-axis upper bound. |
 | `--show_values` | off | Print the numeric value above each bar. |
+| `--two_level_xaxis` | off | Use `major_group` and `minor_group` columns for parent/child x-axis labels. |
 
 ### Color
 

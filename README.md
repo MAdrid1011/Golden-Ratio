@@ -1,7 +1,7 @@
 # Golden Ratio Plot
 
 A Python plotting tool that generates ACM-compliant charts from CSV data.
-Three chart types are supported: **ablation study bar charts**, **sensitivity study line charts**, and **comparison + decomposition bar charts**.
+Four chart modes are supported: **ablation study bar charts**, **sensitivity study line charts**, **comparison + decomposition bar charts**, and **JSON-composed mixed-panel figures**.
 All spatial proportions are derived from the golden ratio φ ≈ 1.618.
 
 ---
@@ -44,6 +44,11 @@ python main.py --mode sensitivity \
            examples/sensitivity_lambda.csv \
            examples/sensitivity_alpha.csv \
   --output out/Sensitivity
+
+# Compose — mixed panels described by JSON
+python main.py --mode compose \
+  --input examples/compose_two_panel.json \
+  --output out/Compose_two_panel --formats pdf png svg
 ```
 
 Each run writes a `.pdf` and `.png` at the output path.
@@ -57,6 +62,7 @@ Each run writes a `.pdf` and `.png` at the output path.
 | Ablation bar charts — CSV format, CLI options, multi-panel, line overlay, palette | [docs/ablation.md](docs/ablation.md) |
 | Decomp charts — grouped stacked bars, color system, separator rules | [docs/decomp.md](docs/decomp.md) |
 | Sensitivity line charts — CSV format, `__ymode__`, `__interp__`, layout rules, axis conventions | [docs/sensitivity.md](docs/sensitivity.md) |
+| Compose figures — JSON layout, bar panels, decomposition-ratio panels, timeline panels | [docs/compose.md](docs/compose.md) |
 
 ---
 
@@ -70,6 +76,7 @@ Golden-Ratio/
 │   ├── renderer/
 │   │   ├── base.py             # ACM style, spines, ticks, save
 │   │   ├── ablation.py         # Grouped bar chart renderer
+│   │   ├── compose.py          # JSON mixed-panel renderer
 │   │   ├── decomp.py           # Comparison + decomposition bar chart renderer
 │   │   └── sensitivity.py      # Dual-axis line chart renderer
 │   └── utils/
@@ -80,11 +87,15 @@ Golden-Ratio/
 ├── examples/
 │   ├── ablation_example_single.csv
 │   ├── ablation_example_double.csv
+│   ├── ablation_two_level.csv
 │   ├── demo_sensitivity_lr.csv
 │   ├── demo_sensitivity_depth.csv
+│   ├── compose_two_panel.json
+│   ├── compose_timeline.json
 │   └── decomp_pipeline.csv
 ├── docs/
 │   ├── ablation.md
+│   ├── compose.md
 │   ├── decomp.md
 │   └── sensitivity.md
 ├── main.py
