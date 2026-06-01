@@ -314,14 +314,7 @@ class AblationRenderer(BaseRenderer):
         ax.set_xlim(0.0, data.n_groups * cell_width)
 
         # ── Vertical group separators ─────────────────────────────────────────
-        if cfg.two_level_xaxis and data.major_group:
-            separator_draw = [
-                sx for i, sx in enumerate(separator_xs)
-                if data.major_group.get(data.groups[i], data.groups[i])
-                != data.major_group.get(data.groups[i + 1], data.groups[i + 1])
-            ]
-        else:
-            separator_draw = separator_xs
+        separator_draw = separator_xs
         for sx in separator_draw:
             ax.axvline(
                 x=sx,
@@ -332,9 +325,18 @@ class AblationRenderer(BaseRenderer):
             )
 
         if cfg.two_level_xaxis and data.major_group:
+            _draw_two_level_xaxis_boundaries(
+                ax,
+                data.groups,
+                separator_xs,
+                data.major_group,
+                x_min=0.0,
+                x_max=data.n_groups * cell_width,
+                linewidth=cfg.spine_linewidth_pt,
+            )
             _draw_parent_xlabels(
                 ax, data.groups, group_centers, data.major_group,
-                fontsize=xlbl_fontsize, y=-0.22
+                fontsize=xlbl_fontsize, y=-0.14
             )
 
         # ── Axis labels ───────────────────────────────────────────────────────
@@ -518,12 +520,45 @@ def _draw_parent_xlabels(
                 ha="center",
                 va="top",
                 fontsize=fontsize,
-                fontweight="bold",
+                fontweight="normal",
                 clip_on=False,
             )
             if i < len(groups):
                 start = i
                 current = parent_map.get(groups[i], groups[i])
+
+
+def _draw_two_level_xaxis_boundaries(
+    ax: Axes,
+    groups: List[str],
+    separator_xs: List[float],
+    parent_map: Dict[str, str],
+    *,
+    x_min: float,
+    x_max: float,
+    linewidth: float,
+) -> None:
+    """Extend separators into the two-level x-axis label area."""
+    trans = ax.get_xaxis_transform()
+    parent_bottom = -0.205
+
+    parent_boundaries = [x_min, x_max]
+    for i, sx in enumerate(separator_xs):
+        left_parent = parent_map.get(groups[i], groups[i])
+        right_parent = parent_map.get(groups[i + 1], groups[i + 1])
+        if left_parent != right_parent:
+            parent_boundaries.append(sx)
+
+    for sx in parent_boundaries:
+        ax.plot(
+            [sx, sx],
+            [0.0, parent_bottom],
+            transform=trans,
+            color="black",
+            linewidth=linewidth,
+            clip_on=False,
+            zorder=4,
+        )
 
 
 # ── Group label helpers ───────────────────────────────────────────────────────
