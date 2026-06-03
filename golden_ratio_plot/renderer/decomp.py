@@ -58,8 +58,9 @@ _SEG_L_DARK:  float = 0.35  # lightness of the bottom (darkest) segment
 _SEG_L_LIGHT: float = 0.72  # lightness of the top (lightest) segment
 _BAR_L_SOLID: float = 0.52  # lightness of an unsegmented (solid) bar
 
-_SEP_LW:    float = 0.8
+_SEP_LW:    float = 1.0
 _SEP_COLOR: str   = "black"
+_PARENT_BOUNDARY_BOTTOM: float = -0.32
 
 
 def _bar_hues(n_bars: int) -> List[float]:
@@ -236,18 +237,35 @@ class DecompRenderer(BaseRenderer):
                 fontsize=xlbl_fs, y=-0.22
             )
 
-        # ── Group separators when n_bars > 2 ────────────────────────────────
-        if n_bars > 2:
-            for i in range(n_groups - 1):
-                if cfg.two_level_xaxis and data.major_group:
-                    left_parent = data.major_group.get(data.groups[i], data.groups[i])
-                    right_parent = data.major_group.get(data.groups[i + 1], data.groups[i + 1])
-                    if left_parent == right_parent:
-                        continue
-                cx_last = centers[(data.groups[i],     data.bars[-1])]
-                cx_next = centers[(data.groups[i + 1], data.bars[0])]
-                sep_x   = (cx_last + bar_w / 2.0 + cx_next - bar_w / 2.0) / 2.0
-                ax.axvline(sep_x, color=_SEP_COLOR, linewidth=_SEP_LW, zorder=3)
+        # ── Parent-group separators ─────────────────────────────────────────
+        separator_xs: List[float] = []
+        for i in range(n_groups - 1):
+            cx_last = centers[(data.groups[i],     data.bars[-1])]
+            cx_next = centers[(data.groups[i + 1], data.bars[0])]
+            sep_x = (cx_last + bar_w / 2.0 + cx_next - bar_w / 2.0) / 2.0
+            separator_xs.append(sep_x)
+
+        separator_draw = separator_xs
+        if cfg.two_level_xaxis and data.major_group:
+            separator_draw = _parent_separator_xs(
+                data.groups,
+                separator_xs,
+                data.major_group,
+            )
+
+        for sep_x in separator_draw:
+            ax.axvline(sep_x, color=_SEP_COLOR, linewidth=_SEP_LW, zorder=3)
+
+        if cfg.two_level_xaxis and data.major_group:
+            _draw_two_level_xaxis_boundaries(
+                ax,
+                data.groups,
+                separator_xs,
+                data.major_group,
+                x_min=0.0,
+                x_max=total_w,
+                linewidth=_SEP_LW,
+            )
 
         # ── Legend (ablation-style: above axes, right-aligned) ─────────────
         handles: List[mpatches.Patch] = []
@@ -316,9 +334,49 @@ def _draw_parent_xlabels(
                 ha="center",
                 va="top",
                 fontsize=fontsize,
-                fontweight="bold",
+                fontweight="normal",
                 clip_on=False,
             )
             if i < len(groups):
                 start = i
                 current = parent_map.get(groups[i], groups[i])
+
+
+def _parent_separator_xs(
+    groups: List[str],
+    separator_xs: List[float],
+    parent_map: Dict[str, str],
+) -> List[float]:
+    parent_separators: List[float] = []
+    for i, sx in enumerate(separator_xs):
+        left_parent = parent_map.get(groups[i], groups[i])
+        right_parent = parent_map.get(groups[i + 1], groups[i + 1])
+        if left_parent != right_parent:
+            parent_separators.append(sx)
+    return parent_separators
+
+
+def _draw_two_level_xaxis_boundaries(
+    ax: Axes,
+    groups: List[str],
+    separator_xs: List[float],
+    parent_map: Dict[str, str],
+    *,
+    x_min: float,
+    x_max: float,
+    linewidth: float,
+) -> None:
+    trans = ax.get_xaxis_transform()
+    parent_boundaries = [x_min, x_max]
+    parent_boundaries.extend(_parent_separator_xs(groups, separator_xs, parent_map))
+
+    for sx in parent_boundaries:
+        ax.plot(
+            [sx, sx],
+            [0.0, _PARENT_BOUNDARY_BOTTOM],
+            transform=trans,
+            color=_SEP_COLOR,
+            linewidth=linewidth,
+            clip_on=False,
+            zorder=4,
+        )

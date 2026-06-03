@@ -315,6 +315,12 @@ class AblationRenderer(BaseRenderer):
 
         # ── Vertical group separators ─────────────────────────────────────────
         separator_draw = separator_xs
+        if cfg.two_level_xaxis and data.major_group:
+            separator_draw = _parent_separator_xs(
+                data.groups,
+                separator_xs,
+                data.major_group,
+            )
         for sx in separator_draw:
             ax.axvline(
                 x=sx,
@@ -526,6 +532,21 @@ def _draw_parent_xlabels(
             if i < len(groups):
                 start = i
                 current = parent_map.get(groups[i], groups[i])
+
+
+def _parent_separator_xs(
+    groups: List[str],
+    separator_xs: List[float],
+    parent_map: Dict[str, str],
+) -> List[float]:
+    """Return separators only where adjacent child groups change parent."""
+    parent_separators: List[float] = []
+    for i, sx in enumerate(separator_xs):
+        left_parent = parent_map.get(groups[i], groups[i])
+        right_parent = parent_map.get(groups[i + 1], groups[i + 1])
+        if left_parent != right_parent:
+            parent_separators.append(sx)
+    return parent_separators
 
 
 def _draw_two_level_xaxis_boundaries(
