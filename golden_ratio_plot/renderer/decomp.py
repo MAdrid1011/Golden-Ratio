@@ -19,6 +19,7 @@ A thin vertical separator is drawn between groups when *n_bars* > 2.
 
 from __future__ import annotations
 
+import colorsys
 from typing import Dict, List, Tuple  # Tuple kept for _segment_colors return type
 
 import matplotlib.patches as mpatches
@@ -41,7 +42,7 @@ from golden_ratio_plot.utils.legend import (
     make_legend_kw as _make_legend_kw,
     stack_legend_rows as _stack_legend_rows,
 )
-from golden_ratio_plot.utils.ticks import nice_range
+from golden_ratio_plot.utils.ticks import nice_range, nice_ticks
 
 # ── Color constants ────────────────────────────────────────────────────────────
 
@@ -60,7 +61,8 @@ _BAR_L_SOLID: float = 0.52  # lightness of an unsegmented (solid) bar
 
 _SEP_LW:    float = 1.0
 _SEP_COLOR: str   = "black"
-_PARENT_BOUNDARY_BOTTOM: float = -0.32
+_PARENT_LABEL_GAP_PT: float = 1.0
+_PARENT_BOUNDARY_PAD_PT: float = 1.0
 
 
 def _bar_hues(n_bars: int) -> List[float]:
@@ -87,6 +89,135 @@ def _segment_colors(
         n_seg, hue=hue, l_start=_SEG_L_DARK, l_end=_SEG_L_LIGHT,
         saturation=_SAT,
     )
+
+
+def _segment_colors_from_base(
+    base_rgb: Tuple[float, float, float],
+    n_seg: int,
+) -> List[Tuple[float, float, float]]:
+    """Return a segment lightness ramp using the hue of a custom base color."""
+    hue, _, saturation = colorsys.rgb_to_hls(*base_rgb)
+    saturation = max(0.20, saturation)
+    if n_seg == 1:
+        return [base_rgb]
+    if n_seg < 1:
+        return []
+    return [
+        colorsys.hls_to_rgb(
+            hue,
+            _SEG_L_DARK + i * (_SEG_L_LIGHT - _SEG_L_DARK) / (n_seg - 1),
+            saturation,
+        )
+        for i in range(n_seg)
+    ]
+
+
+def _colors_for_segments(
+    bar_idx: int,
+    n_bars: int,
+    n_seg: int,
+    custom_colors: List[Tuple[float, float, float]],
+    use_custom_palette: bool,
+) -> List[Tuple[float, float, float]]:
+    if use_custom_palette and bar_idx < len(custom_colors):
+        return _segment_colors_from_base(custom_colors[bar_idx], n_seg)
+    return _segment_colors(bar_idx, n_bars, n_seg)
+
+
+def _decomp_legend_rows(
+    data: DecompData,
+    custom_colors: List[Tuple[float, float, float]],
+    use_custom_palette: bool,
+    width_pt: float,
+    font_size: float,
+) -> List[Tuple[list, List[str]]]:
+    """Build legend rows for decomp charts.
+
+    When every comparison bar is stacked by the same segment list, use one
+    legend row per comparison bar.  This makes comparison-decomposition charts
+    read as "bar name: segment1 segment2 ..." instead of showing repeated
+    segment labels without the bar context.
+    """
+    if _has_shared_stacked_segments(data):
+        rows: List[Tuple[list, List[str]]] = []
+        for b_idx, bar in enumerate(data.bars):
+            segs = data.segments.get(bar, [""])
+            colors = _colors_for_segments(
+                b_idx, len(data.bars), len(segs), custom_colors,
+                use_custom_palette,
+            )
+            handles: list = [
+                mpatches.Patch(
+                    facecolor="none", edgecolor="none", linewidth=0.0
+                )
+            ]
+            labels: List[str] = [f"{bar}:"]
+            for s_idx, seg in enumerate(segs):
+                handles.append(
+                    mpatches.Patch(
+                        facecolor=colors[s_idx],
+                        edgecolor="black",
+                        linewidth=0.4,
+                    )
+                )
+                labels.append(seg)
+            rows.append((handles, labels))
+        if data.legend_note:
+            rows.append((
+                [mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0)],
+                [data.legend_note],
+            ))
+        return rows
+
+    handles: List[mpatches.Patch] = []
+    labels:  List[str]            = []
+    for b_idx, bar in enumerate(data.bars):
+        segs   = data.segments.get(bar, [""])
+        colors = (
+            [custom_colors[b_idx]]
+            if len(segs) == 1 and segs[0] == ""
+            else _colors_for_segments(
+                b_idx, len(data.bars), len(segs), custom_colors,
+                use_custom_palette,
+            )
+        )
+        if len(segs) == 1 and segs[0] == "":
+            handles.append(
+                mpatches.Patch(
+                    facecolor=colors[0], edgecolor="black", linewidth=0.4
+                )
+            )
+            labels.append(bar)
+        else:
+            for s_idx, seg in enumerate(segs):
+                handles.append(
+                    mpatches.Patch(
+                        facecolor=colors[s_idx],
+                        edgecolor="black",
+                        linewidth=0.4,
+                    )
+                )
+                labels.append(seg)
+
+    if data.legend_note:
+        handles.append(
+            mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0)
+        )
+        labels.append(data.legend_note)
+    return _greedy_rows_util(labels, handles, width_pt, font_size)
+
+
+def _has_shared_stacked_segments(data: DecompData) -> bool:
+    if len(data.bars) <= 1:
+        return False
+    first = data.segments.get(data.bars[0], [""])
+    if not first or (len(first) == 1 and first[0] == ""):
+        return False
+    for bar in data.bars[1:]:
+        segs = data.segments.get(bar, [""])
+        if segs != first:
+            return False
+    return True
 
 
 
@@ -158,9 +289,16 @@ class DecompRenderer(BaseRenderer):
         # ── Draw stacked bars ───────────────────────────────────────────────
         y_max_data = 0.0
         custom_colors = palette_from_config(n_bars, cfg.custom_palette, cfg.palette_hue)
+        use_custom_palette = bool(cfg.custom_palette)
         for b_idx, bar in enumerate(data.bars):
             segs   = data.segments.get(bar, [""])
-            colors = [custom_colors[b_idx]] if len(segs) == 1 and segs[0] == "" else _segment_colors(b_idx, n_bars, len(segs))
+            colors = (
+                [custom_colors[b_idx]]
+                if len(segs) == 1 and segs[0] == ""
+                else _colors_for_segments(
+                    b_idx, n_bars, len(segs), custom_colors, use_custom_palette
+                )
+            )
             for g in data.groups:
                 cx     = centers[(g, bar)]
                 bottom = 0.0
@@ -181,8 +319,17 @@ class DecompRenderer(BaseRenderer):
         # ── Y-axis ──────────────────────────────────────────────────────────
         y_lo = cfg.y_min if cfg.y_min is not None else 0.0
         y_hi = cfg.y_max if cfg.y_max is not None else y_max_data
-        axis_min, axis_max, ticks = nice_range(y_lo, y_hi, n=cfg.y_ticks,
-                                               top_padding_intervals=0.15)
+        if cfg.y_max is not None:
+            axis_min = y_lo
+            axis_max = cfg.y_max
+            ticks = [
+                t for t in nice_ticks(axis_min, axis_max, n=cfg.y_ticks)
+                if axis_min <= t <= axis_max
+            ]
+        else:
+            axis_min, axis_max, ticks = nice_range(
+                y_lo, y_hi, n=cfg.y_ticks, top_padding_intervals=0.15
+            )
         if cfg.y_min is None:
             axis_min = 0.0
             ticks = [t for t in ticks if t >= 0.0]
@@ -193,7 +340,7 @@ class DecompRenderer(BaseRenderer):
         # Axes height is roughly 65 % of the figure height in points.
         _axes_h_pt = cfg.height_in * 72.0 * 0.65
         _label_gap = (axis_max - axis_min) * fs * 1.6 / _axes_h_pt
-        if y_hi + _label_gap > axis_max:
+        if cfg.y_max is None and y_hi + _label_gap > axis_max:
             axis_max = y_hi + _label_gap
 
         ax.set_ylim(axis_min, axis_max)
@@ -231,10 +378,14 @@ class DecompRenderer(BaseRenderer):
         # Vertically centre short labels within the tallest (multi-line) row.
         _vcenter_xticklabels(ax, xlbl_fs)
 
+        parent_boundary_bottom = None
         if cfg.two_level_xaxis and data.major_group:
+            parent_label_y, parent_boundary_bottom = _two_level_xaxis_label_layout(
+                fig, ax, xlbl_fs
+            )
             _draw_parent_xlabels(
                 ax, data.groups, group_centers, data.major_group,
-                fontsize=xlbl_fs, y=-0.22
+                fontsize=xlbl_fs, y=parent_label_y
             )
 
         # ── Parent-group separators ─────────────────────────────────────────
@@ -265,31 +416,13 @@ class DecompRenderer(BaseRenderer):
                 x_min=0.0,
                 x_max=total_w,
                 linewidth=_SEP_LW,
+                bottom=parent_boundary_bottom,
             )
 
         # ── Legend (ablation-style: above axes, right-aligned) ─────────────
-        handles: List[mpatches.Patch] = []
-        labels:  List[str]            = []
-        for b_idx, bar in enumerate(data.bars):
-            segs   = data.segments.get(bar, [""])
-            colors = [custom_colors[b_idx]] if len(segs) == 1 and segs[0] == "" else _segment_colors(b_idx, n_bars, len(segs))
-            if len(segs) == 1 and segs[0] == "":
-                handles.append(
-                    mpatches.Patch(facecolor=colors[0], edgecolor="black", linewidth=0.4)
-                )
-                labels.append(bar)
-            else:
-                for s_idx, seg in enumerate(segs):
-                    handles.append(
-                        mpatches.Patch(facecolor=colors[s_idx], edgecolor="black", linewidth=0.4)
-                    )
-                    labels.append(seg)
-
-        # Use full figure width for row packing (short labels fit in one row).
-        if data.legend_note:
-            handles.append(mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0))
-            labels.append(data.legend_note)
-        rows = _greedy_rows_util(labels, handles, cfg.width_pt, xlbl_fs)
+        rows = _decomp_legend_rows(
+            data, custom_colors, use_custom_palette, cfg.width_pt, xlbl_fs
+        )
         all_legs = _stack_legend_rows(ax, rows, xlbl_fs)
         setattr(ax, "_golden_ratio_legend_rows", all_legs)
 
@@ -342,6 +475,58 @@ def _draw_parent_xlabels(
                 current = parent_map.get(groups[i], groups[i])
 
 
+def _two_level_xaxis_label_layout(
+    fig: Figure,
+    ax: Axes,
+    fontsize: float,
+) -> Tuple[float, float]:
+    """Return parent-label and boundary positions from rendered tick labels."""
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    axes_bbox = ax.get_window_extent(renderer)
+    tick_labels = [
+        lbl for lbl in ax.get_xticklabels()
+        if lbl.get_text().strip()
+    ]
+
+    if axes_bbox.height <= 0 or not tick_labels:
+        line_h_axes = _points_to_axes_y(fig, ax, fontsize * 1.25)
+        gap_axes = _points_to_axes_y(fig, ax, _PARENT_LABEL_GAP_PT)
+        parent_y = -line_h_axes - gap_axes
+        return parent_y, parent_y - line_h_axes
+
+    child_bottom_px = min(
+        lbl.get_window_extent(renderer).y0
+        for lbl in tick_labels
+    )
+    parent_top_px = child_bottom_px - _points_to_pixels(
+        fig, _PARENT_LABEL_GAP_PT
+    )
+    parent_y = ax.transAxes.inverted().transform(
+        (axes_bbox.x0, parent_top_px)
+    )[1]
+
+    parent_bottom_px = parent_top_px - _points_to_pixels(
+        fig, fontsize * 1.15 + _PARENT_BOUNDARY_PAD_PT
+    )
+    parent_bottom_y = ax.transAxes.inverted().transform(
+        (axes_bbox.x0, parent_bottom_px)
+    )[1]
+    return parent_y, parent_bottom_y
+
+
+def _points_to_pixels(fig: Figure, points: float) -> float:
+    return points * fig.dpi / 72.0
+
+
+def _points_to_axes_y(fig: Figure, ax: Axes, points: float) -> float:
+    renderer = fig.canvas.get_renderer()
+    axes_bbox = ax.get_window_extent(renderer)
+    if axes_bbox.height <= 0:
+        return 0.0
+    return _points_to_pixels(fig, points) / axes_bbox.height
+
+
 def _parent_separator_xs(
     groups: List[str],
     separator_xs: List[float],
@@ -365,15 +550,17 @@ def _draw_two_level_xaxis_boundaries(
     x_min: float,
     x_max: float,
     linewidth: float,
+    bottom: float | None = None,
 ) -> None:
     trans = ax.get_xaxis_transform()
+    parent_bottom = bottom if bottom is not None else -0.205
     parent_boundaries = [x_min, x_max]
     parent_boundaries.extend(_parent_separator_xs(groups, separator_xs, parent_map))
 
     for sx in parent_boundaries:
         ax.plot(
             [sx, sx],
-            [0.0, _PARENT_BOUNDARY_BOTTOM],
+            [0.0, parent_bottom],
             transform=trans,
             color=_SEP_COLOR,
             linewidth=linewidth,

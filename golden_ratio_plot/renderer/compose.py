@@ -130,6 +130,7 @@ class ComposeRenderer(BaseRenderer):
         intra = float(layout.get("intra_gap", 0.0))
         inter = float(layout.get("inter_gap", 0.82))
         parent_gap = float(layout.get("parent_gap", 1.15))
+        outer_gap = float(layout.get("outer_gap", max(inter / 2.0, bar_w / 2.0)))
 
         centers: Dict[Tuple[str, str, str], float] = {}
         child_centers: List[float] = []
@@ -159,7 +160,9 @@ class ComposeRenderer(BaseRenderer):
                 boundaries.append(x + (parent_gap - inter) / 2.0)
             x += parent_gap
         first_edge = 0.0
-        ax.set_xlim(first_edge, max(last_edge, 1.0))
+        x_min = first_edge - outer_gap
+        x_max = max(last_edge + outer_gap, 1.0)
+        ax.set_xlim(x_min, x_max)
 
         for p in parents:
             for child in children_by_parent[p]:
@@ -189,20 +192,22 @@ class ComposeRenderer(BaseRenderer):
         )
         ax.tick_params(axis="x", which="both", length=0, pad=1.0)
         if two:
-            trans = ax.get_xaxis_transform()
-            for parent, cx in parent_centers:
-                ax.text(
-                    cx, -0.22, parent_labels.get(parent, parent),
-                    transform=trans,
-                    ha="center",
-                    va="top",
-                    fontsize=cfg.font_size_pt,
-                    fontweight="bold",
-                    clip_on=False,
-                )
+            parent_bottom = _draw_compose_parent_xlabels(
+                fig, ax, parent_centers, parent_labels,
+                fontsize=cfg.font_size_pt,
+            )
             if two.get("boundary_lines", False):
-                for bx in [first_edge] + boundaries + [last_edge]:
+                trans = ax.get_xaxis_transform()
+                for bx in [x_min] + boundaries + [x_max]:
                     ax.axvline(bx, color="black", linewidth=0.8, zorder=3, clip_on=False)
+                    ax.plot(
+                        [bx, bx], [0.0, parent_bottom],
+                        transform=trans,
+                        color="black",
+                        linewidth=0.8,
+                        clip_on=False,
+                        zorder=3,
+                    )
 
         handles = [
             mpatches.Patch(
@@ -224,15 +229,23 @@ class ComposeRenderer(BaseRenderer):
         panel: Dict[str, Any],
         data: List[Dict[str, str]],
     ) -> None:
+        xspec = panel.get("x", {})
+        if "parent_col" in xspec and "child_col" in xspec and "bar_col" in xspec:
+            self._draw_grouped_stacked_bar(fig, ax, panel, data)
+            return
+
         cfg = self.config
-        xcol = panel.get("x", {}).get("col", "x")
+        xcol = xspec.get("col", "x")
         segments = panel.get("segments", [])
+        draw_segments = list(enumerate(segments))
+        if panel.get("stack_order") == "reverse":
+            draw_segments = list(reversed(draw_segments))
         colors = panel.get("colors", [])
         bar_w = float(panel.get("bar_layout", {}).get("bar_width", 0.76))
         xs = list(range(len(data)))
         for x, row in zip(xs, data):
             bottom = 0.0
-            for s_idx, item in enumerate(segments):
+            for s_idx, item in draw_segments:
                 val = _as_float(row, item["column"])
                 ax.bar(
                     x, val, width=bar_w, bottom=bottom,
@@ -253,7 +266,11 @@ class ComposeRenderer(BaseRenderer):
                 tick_labels.append(label)
         ax.set_xticks(xs)
         ax.set_xticklabels(tick_labels, fontsize=cfg.font_size_pt)
-        ax.tick_params(axis="x", length=0, pad=-1.0)
+        ax.tick_params(
+            axis="x",
+            length=0,
+            pad=float(panel.get("x", {}).get("tick_pad", -1.0)),
+        )
         ax.set_xlim(-0.6, len(data) - 0.4)
 
         handles = [
@@ -319,6 +336,136 @@ class ComposeRenderer(BaseRenderer):
             )
 
         self._draw_panel_legend(ax, handles, labels, panel.get("legend", {}))
+        self._caption(ax, panel)
+
+    def _draw_grouped_stacked_bar(
+        self,
+        fig: Figure,
+        ax: Axes,
+        panel: Dict[str, Any],
+        data: List[Dict[str, str]],
+    ) -> None:
+        cfg = self.config
+        xspec = panel.get("x", {})
+        parent_col = xspec["parent_col"]
+        child_col = xspec["child_col"]
+        bar_col = xspec["bar_col"]
+        parents = _unique(r[parent_col] for r in data)
+        children_by_parent = {
+            p: _unique(r[child_col] for r in data if r[parent_col] == p)
+            for p in parents
+        }
+        bars = panel.get("bars") or _unique(r[bar_col] for r in data)
+        row_map = {
+            (r[parent_col], r[child_col], r[bar_col]): r
+            for r in data
+        }
+        segments = panel.get("segments", [])
+        draw_segments = list(enumerate(segments))
+        if panel.get("stack_order") == "reverse":
+            draw_segments = list(reversed(draw_segments))
+        bar_colors = panel.get("bar_segment_colors", {})
+        layout = panel.get("bar_layout", {})
+        bar_w = float(layout.get("bar_width", 0.76))
+        intra = float(layout.get("intra_gap", 0.18))
+        inter = float(layout.get("inter_gap", 0.70))
+        parent_gap = float(layout.get("parent_gap", 0.95))
+        outer_gap = float(layout.get("outer_gap", max(inter / 2.0, bar_w / 2.0)))
+
+        centers: Dict[Tuple[str, str, str], float] = {}
+        child_centers: List[float] = []
+        child_names: List[str] = []
+        parent_centers: List[Tuple[str, float]] = []
+        boundaries: List[float] = []
+        x = 0.0
+        first_edge = 0.0
+        last_edge = 0.0
+        for p_idx, parent in enumerate(parents):
+            parent_start = x
+            for child in children_by_parent[parent]:
+                start = x
+                for b_idx, bar in enumerate(bars):
+                    centers[(parent, child, bar)] = x + bar_w / 2.0
+                    x += bar_w
+                    if b_idx < len(bars) - 1:
+                        x += intra
+                child_centers.append((start + x) / 2.0)
+                child_names.append(child)
+                last_edge = x
+                x += inter
+            parent_centers.append((parent, (parent_start + last_edge) / 2.0))
+            if p_idx < len(parents) - 1:
+                boundaries.append(x + (parent_gap - inter) / 2.0)
+            x += parent_gap
+        x_min = first_edge - outer_gap
+        x_max = max(last_edge + outer_gap, 1.0)
+        ax.set_xlim(x_min, x_max)
+
+        for parent in parents:
+            for child in children_by_parent[parent]:
+                for bar in bars:
+                    row = row_map[(parent, child, bar)]
+                    bottom = 0.0
+                    colors = bar_colors.get(bar, [])
+                    for s_idx, item in draw_segments:
+                        val = _as_float(row, item["column"])
+                        ax.bar(
+                            centers[(parent, child, bar)],
+                            val,
+                            width=bar_w,
+                            bottom=bottom,
+                            color=_hex(colors[s_idx] if s_idx < len(colors) else ""),
+                            edgecolor="black",
+                            linewidth=0.4,
+                            zorder=2,
+                        )
+                        bottom += val
+
+        self._apply_y_axis(ax, panel.get("y", {}))
+        ax.yaxis.grid(True, linestyle="--", linewidth=0.45, color="#D0D0D0", zorder=0)
+        ax.set_xticks(child_centers)
+        two = panel.get("two_level_xaxis", {})
+        child_labels = two.get("child_labels", {})
+        parent_labels = two.get("parent_labels", {})
+        ax.set_xticklabels(
+            [child_labels.get(c, c) for c in child_names],
+            fontsize=cfg.font_size_pt,
+        )
+        ax.tick_params(axis="x", which="both", length=0, pad=1.0)
+        if two:
+            parent_bottom = _draw_compose_parent_xlabels(
+                fig, ax, parent_centers, parent_labels,
+                fontsize=cfg.font_size_pt,
+            )
+            if two.get("boundary_lines", False):
+                trans = ax.get_xaxis_transform()
+                for bx in [x_min] + boundaries + [x_max]:
+                    ax.axvline(bx, color="black", linewidth=0.8, zorder=3, clip_on=False)
+                    ax.plot(
+                        [bx, bx], [0.0, parent_bottom],
+                        transform=trans,
+                        color="black",
+                        linewidth=0.8,
+                        clip_on=False,
+                        zorder=3,
+                    )
+
+        legend = panel.get("legend", {})
+        if legend.get("mode") == "bar_segment_rows":
+            self._draw_bar_segment_rows_legend(
+                ax, bars, segments, bar_colors, legend,
+            )
+        else:
+            handles = [
+                mpatches.Patch(
+                    facecolor=_hex((panel.get("colors", []) or [])[i] if i < len(panel.get("colors", [])) else ""),
+                    edgecolor="black",
+                    linewidth=0.4,
+                    label=item["label"],
+                )
+                for i, item in enumerate(segments)
+            ]
+            self._draw_panel_legend(ax, handles, [s["label"] for s in segments], legend)
         self._caption(ax, panel)
 
     # ── Decomposition + ratio panel ─────────────────────────────────────────
@@ -584,24 +731,162 @@ class ComposeRenderer(BaseRenderer):
             ncol = min(len(labels), max(1, int(spec.get("ncol", len(labels))) + 1))
         else:
             ncol = min(int(spec.get("ncol", len(labels))), max(len(labels), 1))
+        placement = spec.get("placement", "")
+        loc = spec.get("loc", "lower right")
         anchor = spec.get("bbox_to_anchor", [1.0, 1.01])
+        if placement == "inside_upper_right":
+            loc = "upper right"
+            anchor = spec.get("bbox_to_anchor", [0.985, 0.985])
+            ncol = int(spec.get("ncol", 1))
         ax.legend(
             handles, labels,
-            loc="lower right",
+            loc=loc,
             bbox_to_anchor=tuple(anchor),
             ncol=ncol,
             frameon=False,
             fontsize=cfg.font_size_pt,
-            handlelength=1.0,
-            handleheight=1.0,
-            handletextpad=0.35,
+            handlelength=float(spec.get("handlelength", 1.0)),
+            handleheight=float(spec.get("handleheight", 1.0)),
+            handletextpad=float(spec.get("handletextpad", 0.35)),
             columnspacing=float(spec.get("columnspacing", 0.35)),
             borderpad=0.0,
-            labelspacing=0.0,
-            borderaxespad=0.0,
+            labelspacing=float(spec.get("labelspacing", 0.0)),
+            borderaxespad=float(spec.get("borderaxespad", 0.0)),
         )
+
+    def _draw_bar_segment_rows_legend(
+        self,
+        ax: Axes,
+        bars: List[str],
+        segments: List[Dict[str, str]],
+        bar_colors: Dict[str, List[str]],
+        spec: Dict[str, Any],
+    ) -> None:
+        cfg = self.config
+        legends = []
+        for row_idx, bar in enumerate(reversed(bars)):
+            colors = bar_colors.get(bar, [])
+            handles: List[Any] = [
+                mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0)
+            ]
+            labels: List[str] = [f"{bar}:"]
+            for s_idx, segment in enumerate(segments):
+                handles.append(
+                    mpatches.Patch(
+                        facecolor=_hex(colors[s_idx] if s_idx < len(colors) else ""),
+                        edgecolor="black",
+                        linewidth=0.4,
+                    )
+                )
+                labels.append(segment["label"])
+            leg = ax.legend(
+                handles,
+                labels,
+                loc="lower right",
+                bbox_to_anchor=tuple(spec.get("bbox_to_anchor", [1.0, 1.01])),
+                ncol=len(labels),
+                frameon=False,
+                fontsize=cfg.font_size_pt,
+                handlelength=1.0,
+                handleheight=1.0,
+                handletextpad=0.35,
+                columnspacing=float(spec.get("columnspacing", 0.35)),
+                borderpad=0.0,
+                labelspacing=0.0,
+                borderaxespad=0.0,
+            )
+            legends.append(leg)
+            if row_idx < len(bars) - 1:
+                ax.add_artist(leg)
+        ax.figure.canvas.draw()
+        renderer = ax.figure.canvas.get_renderer()
+        ax_height = ax.get_window_extent(renderer).height
+        if ax_height <= 0 or not legends:
+            return
+        row_step = legends[0].get_window_extent(renderer).height / ax_height
+        for idx, leg in enumerate(legends):
+            leg.set_bbox_to_anchor((1.0, 1.01 + idx * row_step), transform=ax.transAxes)
 
     def _caption(self, ax: Axes, panel: Dict[str, Any]) -> None:
         caption = panel.get("caption")
         if caption:
-            ax.set_xlabel(caption, fontsize=self.config.font_size_pt + 1, labelpad=10.0)
+            if panel.get("caption_position") == "top_left":
+                ax.text(
+                    float(panel.get("caption_x", -0.10)),
+                    float(panel.get("caption_y", 1.02)),
+                    caption,
+                    transform=ax.transAxes,
+                    ha="left",
+                    va="bottom",
+                    fontsize=self.config.font_size_pt + 1,
+                    fontweight=panel.get("caption_weight", "normal"),
+                    clip_on=False,
+                )
+                return
+            ax.set_xlabel(
+                caption,
+                fontsize=self.config.font_size_pt + 1,
+                labelpad=float(panel.get("caption_labelpad", 10.0)),
+            )
+
+
+def _draw_compose_parent_xlabels(
+    fig: Figure,
+    ax: Axes,
+    parent_centers: List[Tuple[str, float]],
+    parent_labels: Dict[str, str],
+    *,
+    fontsize: float,
+) -> float:
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    axes_bbox = ax.get_window_extent(renderer)
+    tick_labels = [
+        lbl for lbl in ax.get_xticklabels()
+        if lbl.get_text().strip()
+    ]
+    fallback_bottom = -0.205
+    if axes_bbox.height <= 0 or not tick_labels:
+        parent_y = -0.14
+        parent_bottom = fallback_bottom
+    else:
+        child_bottom_px = min(
+            lbl.get_window_extent(renderer).y0
+            for lbl in tick_labels
+        )
+        parent_top_px = child_bottom_px - _points_to_pixels(fig, 1.0)
+        parent_y = ax.transAxes.inverted().transform(
+            (axes_bbox.x0, parent_top_px)
+        )[1]
+        parent_bottom = fallback_bottom
+
+    trans = ax.get_xaxis_transform()
+    parent_texts = []
+    for parent, cx in parent_centers:
+        parent_texts.append(ax.text(
+            cx,
+            parent_y,
+            parent_labels.get(parent, parent),
+            transform=trans,
+            ha="center",
+            va="top",
+            fontsize=fontsize,
+            fontweight="normal",
+            clip_on=False,
+        ))
+    if parent_texts and axes_bbox.height > 0:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        axes_bbox = ax.get_window_extent(renderer)
+        parent_bottom_px = min(
+            text.get_window_extent(renderer).y0
+            for text in parent_texts
+        ) - _points_to_pixels(fig, 0.5)
+        parent_bottom = ax.transAxes.inverted().transform(
+            (axes_bbox.x0, parent_bottom_px)
+        )[1]
+    return parent_bottom
+
+
+def _points_to_pixels(fig: Figure, points: float) -> float:
+    return points * fig.dpi / 72.0

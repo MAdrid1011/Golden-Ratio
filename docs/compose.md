@@ -75,6 +75,12 @@ LLaMA2,SVIP,46,36
 
 For stacked bars, set `"bar_mode": "stacked"` and list `segments` instead of `series`. A `right_axis_line` object can overlay a dashed line on a secondary y-axis.
 
+Legends are placed above the axes by default. For compact panels, set
+`"legend": { "placement": "inside_upper_right", "ncol": 1 }` to place a
+top-to-bottom legend inside the upper-right corner of the plotting area.
+For stacked bars, `"x": { "tick_pad": 2 }` can be used to increase the
+distance between the x-axis tick labels and the axis line.
+
 ---
 
 ## Decomposition-Ratio Panel
@@ -161,4 +167,3 @@ time,pim_active,npu_util,pim_util
 |------|---------|
 | `examples/compose_two_panel.json` | Grouped two-level bars plus stacked bars with a right-axis line. |
 | `examples/compose_timeline.json` | Two-track utilization timeline with active-window annotations. |
-
