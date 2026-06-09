@@ -20,6 +20,7 @@ A thin vertical separator is drawn between groups when *n_bars* > 2.
 from __future__ import annotations
 
 import colorsys
+import math
 from typing import Dict, List, Tuple  # Tuple kept for _segment_colors return type
 
 import matplotlib.patches as mpatches
@@ -234,14 +235,22 @@ class DecompRenderer(BaseRenderer):
         cfg = self.config
         self._apply_rcparams()
         n = len(datasets)
-        total_h_in = cfg.height_in * (1.0 + 0.16 * n)
+        ncols = max(1, min(int(getattr(cfg, "panel_cols", 1)), n))
+        nrows = math.ceil(n / ncols)
+        if cfg.height_pt is not None:
+            total_h_in = cfg.height_in
+        elif ncols == 1:
+            total_h_in = cfg.height_in * (1.0 + 0.16 * n)
+        else:
+            total_h_in = cfg.height_in * nrows * 1.18
         fig = plt.figure(figsize=(cfg.width_in, total_h_in))
-        axes = [fig.add_subplot(n, 1, i + 1) for i in range(n)]
+        axes = [fig.add_subplot(nrows, ncols, i + 1) for i in range(n)]
         for idx, ax in enumerate(axes):
             self._configure_spines(ax)
             self._configure_ticks(ax)
             self._draw(fig, ax, datasets[idx], finalize=False)
-        fig.tight_layout(h_pad=1.0 / cfg.font_size_pt, pad=0.3)
+        h_pad = 0.9 if ncols > 1 else 1.0 / cfg.font_size_pt
+        fig.tight_layout(h_pad=h_pad, pad=0.3)
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
         for ax in axes:
@@ -261,7 +270,10 @@ class DecompRenderer(BaseRenderer):
             return
 
         # ── Resolve x-axis label font size early (needed for y-axis too) ──
-        cell_width_pt = cfg.width_pt * _AXES_WIDTH_FRACTION / n_groups
+        panel_cols = max(1, int(getattr(cfg, "panel_cols", 1)))
+        cell_width_pt = (
+            cfg.width_pt * _AXES_WIDTH_FRACTION / panel_cols / n_groups
+        )
         x_groups = data.groups
         if cfg.two_level_xaxis and data.minor_group:
             x_groups = [data.minor_group.get(g, g) for g in data.groups]
@@ -420,8 +432,11 @@ class DecompRenderer(BaseRenderer):
             )
 
         # ── Legend (ablation-style: above axes, right-aligned) ─────────────
+        legend_width_pt = cfg.width_pt if panel_cols == 1 else (
+            cfg.width_pt * _AXES_WIDTH_FRACTION / panel_cols
+        )
         rows = _decomp_legend_rows(
-            data, custom_colors, use_custom_palette, cfg.width_pt, xlbl_fs
+            data, custom_colors, use_custom_palette, legend_width_pt, xlbl_fs
         )
         all_legs = _stack_legend_rows(ax, rows, xlbl_fs)
         setattr(ax, "_golden_ratio_legend_rows", all_legs)
@@ -434,6 +449,8 @@ class DecompRenderer(BaseRenderer):
                 labelpad=10 if cfg.two_level_xaxis else 2,
                 color="black",
             )
+            if cfg.two_level_xaxis and panel_cols > 1:
+                ax.xaxis.set_label_coords(0.5, -0.240)
 
         # ── Finalise layout and legend row positions ─────────────────────────
         if finalize:

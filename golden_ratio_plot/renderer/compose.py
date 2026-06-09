@@ -51,8 +51,9 @@ class ComposeRenderer(BaseRenderer):
             spec = json.load(fh)
 
         panels = spec.get("panels", [])
-        rows = int(spec.get("layout", {}).get("rows", 1))
-        cols = int(spec.get("layout", {}).get("cols", 1))
+        layout = spec.get("layout", {})
+        rows = int(layout.get("rows", 1))
+        cols = int(layout.get("cols", 1))
         has_timeline = any(p.get("type") == "timeline" for p in panels)
 
         height_pt = cfg.height_pt
@@ -61,7 +62,15 @@ class ComposeRenderer(BaseRenderer):
 
         self._apply_rcparams()
         fig = plt.figure(figsize=(cfg.width_pt / PT_PER_INCH, height_pt / PT_PER_INCH))
-        grid = GridSpec(rows, cols, figure=fig, hspace=0.72, wspace=0.25)
+        default_hspace = 0.34 if has_timeline else 0.72
+        grid = GridSpec(
+            rows,
+            cols,
+            figure=fig,
+            hspace=float(layout.get("hspace", default_hspace)),
+            wspace=float(layout.get("wspace", 0.25)),
+            height_ratios=layout.get("height_ratios"),
+        )
         base_dir = path.parent
 
         for panel in panels:
@@ -83,10 +92,25 @@ class ComposeRenderer(BaseRenderer):
             else:
                 raise ValueError(f"Unsupported compose panel type: {ptype}")
 
+        adjust = layout.get("adjust", {})
         if has_timeline:
-            fig.subplots_adjust(left=0.12, right=0.94, top=0.92, bottom=0.13, hspace=0.36)
+            fig.subplots_adjust(
+                left=float(adjust.get("left", 0.12)),
+                right=float(adjust.get("right", 0.94)),
+                top=float(adjust.get("top", 0.92)),
+                bottom=float(adjust.get("bottom", 0.13)),
+                hspace=float(adjust.get("hspace", 0.34)),
+                wspace=float(adjust.get("wspace", layout.get("wspace", 0.25))),
+            )
         else:
-            fig.subplots_adjust(left=0.10, right=0.94, top=0.90, bottom=0.15, hspace=0.72)
+            fig.subplots_adjust(
+                left=float(adjust.get("left", 0.10)),
+                right=float(adjust.get("right", 0.94)),
+                top=float(adjust.get("top", 0.90)),
+                bottom=float(adjust.get("bottom", 0.15)),
+                hspace=float(adjust.get("hspace", 0.72)),
+                wspace=float(adjust.get("wspace", layout.get("wspace", 0.25))),
+            )
         self._save(fig)
         plt.close(fig)
 
@@ -130,7 +154,7 @@ class ComposeRenderer(BaseRenderer):
         intra = float(layout.get("intra_gap", 0.0))
         inter = float(layout.get("inter_gap", 0.82))
         parent_gap = float(layout.get("parent_gap", 1.15))
-        outer_gap = float(layout.get("outer_gap", max(inter / 2.0, bar_w / 2.0)))
+        outer_gap = float(layout.get("outer_gap", (inter + parent_gap) / 2.0))
 
         centers: Dict[Tuple[str, str, str], float] = {}
         child_centers: List[float] = []
@@ -370,7 +394,7 @@ class ComposeRenderer(BaseRenderer):
         intra = float(layout.get("intra_gap", 0.18))
         inter = float(layout.get("inter_gap", 0.70))
         parent_gap = float(layout.get("parent_gap", 0.95))
-        outer_gap = float(layout.get("outer_gap", max(inter / 2.0, bar_w / 2.0)))
+        outer_gap = float(layout.get("outer_gap", (inter + parent_gap) / 2.0))
 
         centers: Dict[Tuple[str, str, str], float] = {}
         child_centers: List[float] = []
@@ -489,23 +513,29 @@ class ComposeRenderer(BaseRenderer):
         bar_w = 0.72
         intra = 0.20
         gap = 0.72
+        outer_gap = float(panel.get("bar_layout", {}).get("outer_gap", (intra + gap) / 2.0))
         xs_by_group: Dict[str, List[float]] = {}
         row_by_x: List[Tuple[float, Dict[str, str]]] = []
         centers: List[Tuple[str, float]] = []
         boundaries: List[float] = []
+        group_edges: List[Tuple[float, float]] = []
         x = 0.0
         for g_idx, group in enumerate(groups):
             rows = [r for r in data if r[group_col] == group]
             xs: List[float] = []
             start = x
+            start_edge = x - bar_w / 2.0
             for row in rows:
                 xs.append(x)
                 row_by_x.append((x, row))
                 x += bar_w + intra
             xs_by_group[group] = xs
+            end_edge = xs[-1] + bar_w / 2.0
+            group_edges.append((start_edge, end_edge))
             centers.append((group, (start + xs[-1]) / 2.0))
             if g_idx < len(groups) - 1:
-                boundaries.append(x - intra / 2.0 + gap / 2.0)
+                next_start_edge = x + gap - bar_w / 2.0
+                boundaries.append((end_edge + next_start_edge) / 2.0)
             x += gap
 
         for xpos, row in row_by_x:
@@ -528,7 +558,9 @@ class ComposeRenderer(BaseRenderer):
             ax.hlines(total, xpos - bar_w / 2, xpos + bar_w / 2,
                       color="black", linestyle="--", linewidth=0.45, zorder=4)
 
-        ax.set_xlim(-0.55, max(x - gap, 1.0) + 0.25)
+        x_min = group_edges[0][0] - outer_gap if group_edges else -0.55
+        x_max = group_edges[-1][1] + outer_gap if group_edges else 1.0
+        ax.set_xlim(x_min, max(x_max, 1.0))
         ax.set_ylim(0, 16.8)
         ax.set_yticks([0, 4, 8, 12, 16])
         ax.set_ylabel(panel.get("y_label", ""), fontsize=cfg.font_size_pt, labelpad=2)
@@ -810,7 +842,8 @@ class ComposeRenderer(BaseRenderer):
     def _caption(self, ax: Axes, panel: Dict[str, Any]) -> None:
         caption = panel.get("caption")
         if caption:
-            if panel.get("caption_position") == "top_left":
+            position = panel.get("caption_position", "xlabel")
+            if position == "top_left":
                 ax.text(
                     float(panel.get("caption_x", -0.10)),
                     float(panel.get("caption_y", 1.02)),
@@ -823,10 +856,29 @@ class ComposeRenderer(BaseRenderer):
                     clip_on=False,
                 )
                 return
+            if position == "upper_left":
+                ax.text(
+                    float(panel.get("caption_x", 0.02)),
+                    float(panel.get("caption_y", 0.96)),
+                    caption,
+                    transform=ax.transAxes,
+                    ha="left",
+                    va="top",
+                    fontsize=self.config.font_size_pt + 1,
+                    fontweight=panel.get("caption_weight", "bold"),
+                    bbox=dict(facecolor="white", edgecolor="none", pad=0.4, alpha=0.85),
+                    zorder=6,
+                )
+                return
             ax.set_xlabel(
                 caption,
                 fontsize=self.config.font_size_pt + 1,
-                labelpad=float(panel.get("caption_labelpad", 10.0)),
+                labelpad=float(
+                    panel.get(
+                        "caption_labelpad",
+                        10.0 if panel.get("two_level_xaxis") else 1.0,
+                    )
+                ),
             )
 
 

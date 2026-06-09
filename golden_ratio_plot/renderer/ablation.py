@@ -94,17 +94,22 @@ class AblationRenderer(BaseRenderer):
             return
         cfg = self.config
         n = len(datasets)
+        ncols = max(1, min(int(getattr(cfg, "panel_cols", 1)), n))
+        nrows = math.ceil(n / ncols)
         self._apply_rcparams()
 
-        # Each panel's axes area is 1/n of the single-panel golden-ratio height.
-        # Non-axes content (legend, caption, tick labels, inter-panel gap) needs a
-        # fixed overhead per panel regardless of n.  Empirically this overhead is
-        # ≈ 0.18 × cfg.height_in (reduced from original 0.25× to tighten layout),
-        # giving: total = axes_total + n × decoration = cfg.height_in × (1 + 0.18n).
-        total_h_in = cfg.height_in * (1.0 + 0.16 * n)
+        if cfg.height_pt is not None:
+            total_h_in = cfg.height_in
+        elif ncols == 1:
+            # Historical vertical-panel behavior.
+            total_h_in = cfg.height_in * (1.0 + 0.16 * n)
+        else:
+            # A multi-column grid needs enough vertical space for each row's
+            # two-level x labels and legend rows.
+            total_h_in = cfg.height_in * nrows * 1.18
 
         fig = plt.figure(figsize=(cfg.width_in, total_h_in))
-        axes = [fig.add_subplot(n, 1, i + 1) for i in range(n)]
+        axes = [fig.add_subplot(nrows, ncols, i + 1) for i in range(n)]
         for ax in axes:
             self._configure_spines(ax)
             self._configure_ticks(ax)
@@ -197,7 +202,10 @@ class AblationRenderer(BaseRenderer):
             line_color = colorsys.hls_to_rgb(line_hue / 360.0, 0.50, 0.80)
 
         # ── Determine group label display mode ────────────────────────────────
-        cell_width_pt = cfg.width_pt * _AXES_WIDTH_FRACTION / data.n_groups
+        panel_cols = max(1, int(getattr(cfg, "panel_cols", 1)))
+        cell_width_pt = (
+            cfg.width_pt * _AXES_WIDTH_FRACTION / panel_cols / data.n_groups
+        )
         x_groups = data.groups
         if cfg.two_level_xaxis and data.minor_group:
             x_groups = [data.minor_group.get(g, g) for g in data.groups]
@@ -825,7 +833,9 @@ def _greedy_rows(
 ) -> List[Tuple[list, List[str]]]:
     """Delegate to :func:`utils.legend.greedy_rows` using the axes-width budget."""
     fs = font_size if font_size is not None else cfg.font_size_pt
-    return _greedy_rows_util(labels, handles, cfg.width_pt * _AXES_WIDTH_FRACTION, fs)
+    panel_cols = max(1, int(getattr(cfg, "panel_cols", 1)))
+    width_pt = cfg.width_pt * _AXES_WIDTH_FRACTION / panel_cols
+    return _greedy_rows_util(labels, handles, width_pt, fs)
 
 
 def _draw_legend_init(

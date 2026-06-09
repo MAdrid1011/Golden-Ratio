@@ -77,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Print numeric values on top of each bar.")
     p.add_argument("--two_level_xaxis", action="store_true",
                    help="Use major_group/minor_group CSV columns for two-level x-axis labels.")
+    p.add_argument("--panel_cols", type=int, default=1,
+                   help="Number of columns for multi-panel ablation/decomp figures.")
     p.add_argument("--font_size_pt", type=float, default=7.0,
                    help="Tick-label and legend font size in pt (ACM minimum: 7).")
     p.add_argument("--label_font_size_pt", type=float, default=None,
@@ -116,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         y_max=args.y_max,
         show_values=args.show_values,
         two_level_xaxis=args.two_level_xaxis,
+        panel_cols=max(1, args.panel_cols),
         palette_hue=args.palette_hue,
         custom_palette=args.palette,
     )

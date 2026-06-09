@@ -63,6 +63,7 @@ class PlotConfig:
     # ── Bar display ──────────────────────────────────────────────────────────
     show_values: bool = False             # print numeric value above each bar
     two_level_xaxis: bool = False         # use major_group/minor_group CSV columns
+    panel_cols: int = 1                   # columns for multi-panel ablation/decomp figures
 
     # ── Colors ───────────────────────────────────────────────────────────────
     # Custom palette: list of hex/CSS color strings, one per unique label.
