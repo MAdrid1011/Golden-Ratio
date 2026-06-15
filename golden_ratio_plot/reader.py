@@ -147,10 +147,14 @@ class SensitivityData:
     right_label: str = "Right"
     left_data: Dict[str, List[float]] = field(default_factory=dict)
     right_data: Dict[str, List[float]] = field(default_factory=dict)
+    right_series_labels: List[str] = field(default_factory=list)
+    right_series_data: Dict[str, Dict[str, List[float]]] = field(default_factory=dict)
     caption: str = ""
     left_mode: str = "variation"   # "variation" | "stable"
     right_mode: str = "variation"  # "variation" | "stable"
     interp_pts: int = 0            # extra points between each pair (0 = off)
+    left_plot: str = "line"        # "line" | "bar_first" | "bar_grouped"
+    right_plot: str = "all"        # "all" | "first"
 
     @property
     def n_groups(self) -> int:
@@ -162,6 +166,13 @@ class SensitivityData:
 
     @property
     def all_right_values(self) -> List[float]:
+        if self.right_series_data:
+            return [
+                v
+                for series in self.right_series_data.values()
+                for vs in series.values()
+                for v in vs
+            ]
         return [v for vs in self.right_data.values() for v in vs]
 
 
@@ -220,25 +231,34 @@ def read_sensitivity_csv(path: str | Path) -> SensitivityData:
             raise ValueError("Sensitivity CSV must have an 'x' column.")
         reserved = {"group", "x"}
         value_cols = [f for f in fieldnames if f.strip().lower() not in reserved]
-        if len(value_cols) != 2:
+        if len(value_cols) < 2:
             raise ValueError(
-                f"Sensitivity CSV must have exactly 2 value columns (left and right); "
+                f"Sensitivity CSV must have at least 2 value columns (left and right); "
                 f"found {len(value_cols)}: {value_cols}."
             )
-        left_col, right_col = value_cols
+        left_col = value_cols[0]
+        right_cols = value_cols[1:]
+        right_col = right_cols[0]
 
         # Collect raw rows first so we can align all groups to the same x_values
-        rows: List[Tuple[str, str, float, float]] = []
+        rows: List[Tuple[str, str, float, List[float]]] = []
         caption = ""
         left_mode = "variation"
         right_mode = "variation"
         interp_pts = 0
+        left_plot = "line"
+        right_plot = "all"
+        right_label_override = ""
 
         for i, row in enumerate(reader, start=2):
             group = row["group"].strip()
             x_raw = row["x"].strip()
             left_raw = (row[left_col] or "").strip()
             right_raw = (row[right_col] or "").strip()
+            extra_right_raw = [
+                (row[col] or "").strip()
+                for col in right_cols[1:]
+            ]
 
             if group.startswith("__"):
                 if group == "__caption__":
@@ -253,6 +273,14 @@ def read_sensitivity_csv(path: str | Path) -> SensitivityData:
                         interp_pts = int(left_raw or right_raw)
                     except ValueError:
                         pass
+                elif group == "__leftplot__":
+                    left_plot = (left_raw or right_raw or "line").lower()
+                elif group == "__rightplot__":
+                    right_plot = (left_raw or right_raw or "all").lower()
+                elif group == "__rightlabel__":
+                    right_label_override = left_raw or right_raw or next(
+                        (v for v in extra_right_raw if v), ""
+                    )
                 continue
 
             try:
@@ -261,14 +289,17 @@ def read_sensitivity_csv(path: str | Path) -> SensitivityData:
                 raise ValueError(
                     f"Row {i}: left value '{left_raw}' in column '{left_col}' is not a number."
                 )
-            try:
-                rv = float(right_raw)
-            except ValueError:
-                raise ValueError(
-                    f"Row {i}: right value '{right_raw}' in column '{right_col}' is not a number."
-                )
+            right_values: List[float] = []
+            for col in right_cols:
+                raw = (row[col] or "").strip()
+                try:
+                    right_values.append(float(raw))
+                except ValueError:
+                    raise ValueError(
+                        f"Row {i}: right value '{raw}' in column '{col}' is not a number."
+                    )
 
-            rows.append((group, x_raw, lv, rv))
+            rows.append((group, x_raw, lv, right_values))
 
     if not rows:
         raise ValueError(f"Sensitivity CSV has no data rows: {path}")
@@ -278,40 +309,51 @@ def read_sensitivity_csv(path: str | Path) -> SensitivityData:
     x_seen: List[str] = list(dict.fromkeys(x for _, x, _, _ in rows))
 
     # Index data by (group, x) for alignment
-    data_map: Dict[Tuple[str, str], Tuple[float, float]] = {}
-    for group, x_raw, lv, rv in rows:
+    data_map: Dict[Tuple[str, str], Tuple[float, List[float]]] = {}
+    for group, x_raw, lv, rvs in rows:
         key = (group, x_raw)
         if key in data_map:
             raise ValueError(
                 f"Duplicate (group='{group}', x='{x_raw}') in sensitivity CSV."
             )
-        data_map[key] = (lv, rv)
+        data_map[key] = (lv, rvs)
 
     left_data: Dict[str, List[float]] = {}
     right_data: Dict[str, List[float]] = {}
+    right_series_data: Dict[str, Dict[str, List[float]]] = {
+        label: {} for label in right_cols
+    }
     for g in groups_seen:
         left_data[g] = []
         right_data[g] = []
+        for label in right_cols:
+            right_series_data[label][g] = []
         for x in x_seen:
             if (g, x) not in data_map:
                 raise ValueError(
                     f"Group '{g}' has no value for x='{x}'."
                 )
-            lv, rv = data_map[(g, x)]
+            lv, rvs = data_map[(g, x)]
             left_data[g].append(lv)
-            right_data[g].append(rv)
+            right_data[g].append(rvs[0])
+            for label, rv in zip(right_cols, rvs):
+                right_series_data[label][g].append(rv)
 
     return SensitivityData(
         groups=groups_seen,
         x_values=x_seen,
         left_label=left_col,
-        right_label=right_col,
+        right_label=right_label_override or right_col,
         left_data=left_data,
         right_data=right_data,
+        right_series_labels=right_cols,
+        right_series_data=right_series_data,
         caption=caption,
         left_mode=left_mode,
         right_mode=right_mode,
         interp_pts=interp_pts,
+        left_plot=left_plot,
+        right_plot=right_plot,
     )
 
 

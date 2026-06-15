@@ -72,6 +72,7 @@ class ComposeRenderer(BaseRenderer):
             height_ratios=layout.get("height_ratios"),
         )
         base_dir = path.parent
+        panel_axes: Dict[Tuple[int, int], List[Axes]] = {}
 
         for panel in panels:
             row = int(panel.get("row", 0))
@@ -83,6 +84,7 @@ class ComposeRenderer(BaseRenderer):
                 continue
 
             ax = fig.add_subplot(cell)
+            panel_axes.setdefault((row, col), []).append(ax)
             self._configure_spines(ax)
             self._configure_ticks(ax)
             if ptype == "bar":
@@ -91,6 +93,37 @@ class ComposeRenderer(BaseRenderer):
                 self._draw_decomp_ratio_panel(fig, ax, panel, base_dir)
             else:
                 raise ValueError(f"Unsupported compose panel type: {ptype}")
+
+        global_legend = spec.get("global_legend", {})
+        if global_legend:
+            labels = global_legend.get("labels", [])
+            colors = global_legend.get("colors", [])
+            handles = [
+                mpatches.Patch(
+                    facecolor=_hex(colors[i] if i < len(colors) else ""),
+                    edgecolor="black",
+                    linewidth=0.4,
+                    label=label,
+                )
+                for i, label in enumerate(labels)
+            ]
+            if handles:
+                fig.legend(
+                    handles,
+                    labels,
+                    loc=global_legend.get("loc", "upper right"),
+                    bbox_to_anchor=tuple(global_legend.get("bbox_to_anchor", [0.985, 0.985])),
+                    ncol=int(global_legend.get("ncol", len(labels))),
+                    frameon=False,
+                    fontsize=cfg.font_size_pt,
+                    handlelength=float(global_legend.get("handlelength", 1.0)),
+                    handleheight=float(global_legend.get("handleheight", 1.0)),
+                    handletextpad=float(global_legend.get("handletextpad", 0.35)),
+                    columnspacing=float(global_legend.get("columnspacing", 0.35)),
+                    borderpad=0.0,
+                    labelspacing=float(global_legend.get("labelspacing", 0.0)),
+                    borderaxespad=float(global_legend.get("borderaxespad", 0.0)),
+                )
 
         adjust = layout.get("adjust", {})
         if has_timeline:
@@ -111,8 +144,72 @@ class ComposeRenderer(BaseRenderer):
                 hspace=float(adjust.get("hspace", 0.72)),
                 wspace=float(adjust.get("wspace", layout.get("wspace", 0.25))),
             )
+        pack = layout.get("vertical_pack", {})
+        if pack.get("enabled", False):
+            self._pack_vertical_panels(
+                fig,
+                panel_axes,
+                rows,
+                cols,
+                gap_pt=float(pack.get("gap_pt", 2.0)),
+            )
         self._save(fig)
         plt.close(fig)
+
+    @staticmethod
+    def _pack_vertical_panels(
+        fig: Figure,
+        panel_axes: Dict[Tuple[int, int], List[Axes]],
+        rows: int,
+        cols: int,
+        *,
+        gap_pt: float,
+    ) -> None:
+        """Pack vertical compose panels using a fixed gap in points.
+
+        Matplotlib's GridSpec hspace is relative to axes height, so the visual
+        gap changes when the figure height changes. This pass measures each
+        upper panel's full text extent and moves the next row directly below it.
+        """
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        fig_h_pt = fig.get_figheight() * PT_PER_INCH
+        if fig_h_pt <= 0:
+            return
+        gap_fig = gap_pt / fig_h_pt
+        inv = fig.transFigure.inverted()
+        for col in range(cols):
+            keys = [
+                (row, col)
+                for row in range(rows)
+                if (row, col) in panel_axes
+            ]
+            if len(keys) < 2:
+                continue
+            for prev_key, cur_key in zip(keys, keys[1:]):
+                prev_axes = panel_axes[prev_key]
+                cur_axes = panel_axes[cur_key]
+                prev_bottom = min(
+                    inv.transform_bbox(ax.get_tightbbox(renderer)).y0
+                    for ax in prev_axes
+                    if ax.get_visible()
+                )
+                cur_top = max(
+                    ax.get_position().y1
+                    for ax in cur_axes
+                    if ax.get_visible()
+                )
+                delta = (prev_bottom - gap_fig) - cur_top
+                for ax in cur_axes:
+                    pos = ax.get_position()
+                    ax.set_position([
+                        pos.x0,
+                        pos.y0 + delta,
+                        pos.width,
+                        pos.height,
+                    ])
+                fig.canvas.draw()
+                renderer = fig.canvas.get_renderer()
 
     # ── Generic bar panel ──────────────────────────────────────────────────
 
@@ -742,6 +839,8 @@ class ComposeRenderer(BaseRenderer):
         labels: List[str],
         spec: Dict[str, Any],
     ) -> None:
+        if spec.get("show", True) is False:
+            return
         cfg = self.config
         order = spec.get("order")
         if order:
@@ -843,6 +942,9 @@ class ComposeRenderer(BaseRenderer):
         caption = panel.get("caption")
         if caption:
             position = panel.get("caption_position", "xlabel")
+            caption_font_size = float(
+                panel.get("caption_font_size_pt", self.config.font_size_pt + 1)
+            )
             if position == "top_left":
                 ax.text(
                     float(panel.get("caption_x", -0.10)),
@@ -851,7 +953,7 @@ class ComposeRenderer(BaseRenderer):
                     transform=ax.transAxes,
                     ha="left",
                     va="bottom",
-                    fontsize=self.config.font_size_pt + 1,
+                    fontsize=caption_font_size,
                     fontweight=panel.get("caption_weight", "normal"),
                     clip_on=False,
                 )
@@ -864,7 +966,7 @@ class ComposeRenderer(BaseRenderer):
                     transform=ax.transAxes,
                     ha="left",
                     va="top",
-                    fontsize=self.config.font_size_pt + 1,
+                    fontsize=caption_font_size,
                     fontweight=panel.get("caption_weight", "bold"),
                     bbox=dict(facecolor="white", edgecolor="none", pad=0.4, alpha=0.85),
                     zorder=6,
@@ -872,7 +974,7 @@ class ComposeRenderer(BaseRenderer):
                 return
             ax.set_xlabel(
                 caption,
-                fontsize=self.config.font_size_pt + 1,
+                fontsize=caption_font_size,
                 labelpad=float(
                     panel.get(
                         "caption_labelpad",

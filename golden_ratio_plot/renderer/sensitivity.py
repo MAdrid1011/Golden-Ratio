@@ -39,7 +39,10 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as _mticker
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from matplotlib.path import Path as _MPath
+from matplotlib.transforms import Bbox
 from golden_ratio_plot.config import PHI, PT_PER_INCH, PlotConfig
 from golden_ratio_plot.reader import SensitivityData
 from golden_ratio_plot.renderer.base import BaseRenderer
@@ -48,6 +51,8 @@ from golden_ratio_plot.renderer.base import BaseRenderer
 
 _LEFT_COLOR  = "#EE3311"   # vivid vermilion red
 _RIGHT_COLOR = "#0099DD"   # vivid sky blue
+_LEGEND_COLOR = "#009E73"  # high-contrast green for encoding legends
+_BAR_COLORS = ["#F26B4F", "#F4A261", "#6AAE75"]
 _GRID_COLOR  = "#aaaaaa"
 _GRID_ALPHA  = 0.75
 _GRID_LW     = 0.5
@@ -269,8 +274,13 @@ def _interp_jitter(
 # ── Panel drawing ─────────────────────────────────────────────────────────────
 
 def _draw_panel(
-    fig: Figure, ax: Axes, data: SensitivityData, cfg: PlotConfig, n_cols: int = 1
-) -> None:
+    fig: Figure,
+    ax: Axes,
+    data: SensitivityData,
+    cfg: PlotConfig,
+    n_cols: int = 1,
+    col_idx: int = 0,
+) -> Axes:
     """Populate one sensitivity subplot."""
     fs = cfg.font_size_pt
     # Tick length scales linearly with panel width (∝ 1/n_cols).
@@ -284,6 +294,8 @@ def _draw_panel(
     # ax owns left / top / bottom spines; ax2 owns only the right spine.
     # All spines and tick marks are BLACK; only labels and axis titles carry colour.
     ax2 = ax.twinx()
+    ax.set_box_aspect(1)
+    ax2.set_box_aspect(1)
     for s in ("top", "left", "bottom"):
         ax2.spines[s].set_visible(False)
     ax2.spines["right"].set_linewidth(cfg.spine_linewidth_pt)
@@ -374,8 +386,15 @@ def _draw_panel(
         )
 
     # ── Axis labels ───────────────────────────────────────────────────────────
-    ax.set_ylabel(data.left_label, color=_LEFT_COLOR, fontsize=fs, labelpad=1)
-    ax2.set_ylabel(data.right_label, color=_RIGHT_COLOR, fontsize=fs, labelpad=1)
+    if col_idx == 0:
+        ax.set_ylabel(data.left_label, color=_LEFT_COLOR, fontsize=fs, labelpad=1)
+    else:
+        ax.set_ylabel("")
+    if col_idx == n_cols - 1:
+        ax2.set_ylabel(data.right_label, color=_RIGHT_COLOR, fontsize=fs, labelpad=1)
+    else:
+        ax2.set_ylabel("")
+        ax2.tick_params(axis="y", labelright=False)
 
     # ── X-axis ticks and limits ───────────────────────────────────────────────
     ax.set_xticks(x_pos)
@@ -383,15 +402,48 @@ def _draw_panel(
     margin = 0.5 if n_x > 1 else 1.0
     ax.set_xlim(-margin, n_x - 1 + margin)
 
-    # ── Plot lines ────────────────────────────────────────────────────────────
+    # ── Plot lines / optional left-axis bars ──────────────────────────────────
     line_lw = 1.0
     ms = 3.0
     n_between = data.interp_pts  # 0 = disabled
+    right_series_colors = [_RIGHT_COLOR, _RIGHT_COLOR, _RIGHT_COLOR]
+    right_series_markers = [_RECT_MARKER, "^", "o"]
+
+    if data.left_plot == "bar_first" and data.groups:
+        first_group = data.groups[0]
+        ax.bar(
+            x_pos,
+            data.left_data[first_group],
+            width=0.56,
+            color=_LEFT_COLOR,
+            edgecolor=_LEFT_COLOR,
+            linewidth=0.45,
+            alpha=0.38,
+            zorder=2,
+        )
+    elif data.left_plot == "bar_grouped" and data.groups:
+        total_width = 0.74
+        bar_width = total_width / max(len(data.groups), 1)
+        center = (len(data.groups) - 1) / 2.0
+        for g_idx, group in enumerate(data.groups):
+            offset = (g_idx - center) * bar_width
+            ax.bar(
+                [x + offset for x in x_pos],
+                data.left_data[group],
+                width=bar_width * 0.92,
+                color=_BAR_COLORS[g_idx % len(_BAR_COLORS)],
+                edgecolor=_BAR_COLORS[g_idx % len(_BAR_COLORS)],
+                linewidth=0.45,
+                alpha=0.45,
+                zorder=2,
+            )
 
     for g_idx, group in enumerate(data.groups):
         ls = _LINE_STYLES[g_idx % len(_LINE_STYLES)]
         ly = data.left_data[group]
         ry = data.right_data[group]
+        draw_left = data.left_plot not in {"bar_first", "bar_grouped"}
+        draw_right = data.right_plot != "first" or g_idx == 0
 
         if n_between > 0:
             seed_l = hash(tuple(round(v, 6) for v in ly)) & 0x7FFFFFFF
@@ -399,10 +451,12 @@ def _draw_panel(
             xl, yl = _interp_jitter(ly, n_between, seed=seed_l + g_idx)
             xr, yr = _interp_jitter(ry, n_between, seed=seed_r + g_idx)
             # Thin wiggly connecting line (no markers on the line itself)
-            ax.plot(xl, yl, color=_LEFT_COLOR, linestyle=ls,
-                    linewidth=line_lw * 0.5, marker="none", zorder=3, alpha=0.7)
-            ax2.plot(xr, yr, color=_RIGHT_COLOR, linestyle=ls,
-                     linewidth=line_lw * 0.5, marker="none", zorder=3, alpha=0.7)
+            if draw_left:
+                ax.plot(xl, yl, color=_LEFT_COLOR, linestyle=ls,
+                        linewidth=line_lw * 0.5, marker="none", zorder=3, alpha=0.7)
+            if draw_right:
+                ax2.plot(xr, yr, color=_RIGHT_COLOR, linestyle=ls,
+                         linewidth=line_lw * 0.5, marker="none", zorder=3, alpha=0.7)
             # Hollow square markers only at strictly interpolated positions
             # (skip integer x values which correspond to original data points)
             def _interp_only(xs, ys):
@@ -414,38 +468,115 @@ def _draw_panel(
             xl_i, yl_i = _interp_only(xl, yl)
             xr_i, yr_i = _interp_only(xr, yr)
             sq_ms = ms * 0.65          # square side ≈ circle diameter × 0.65
-            ax.plot(list(xl_i), list(yl_i), linestyle="none",
-                    marker=_RECT_MARKER, markersize=sq_ms,
-                    markerfacecolor="none", markeredgecolor=_LEFT_COLOR,
-                    markeredgewidth=0.45, alpha=0.75, zorder=3)
-            ax2.plot(list(xr_i), list(yr_i), linestyle="none",
-                     marker=_RECT_MARKER, markersize=sq_ms,
-                     markerfacecolor="none", markeredgecolor=_RIGHT_COLOR,
-                     markeredgewidth=0.45, alpha=0.75, zorder=3)
+            if draw_left:
+                ax.plot(list(xl_i), list(yl_i), linestyle="none",
+                        marker=_RECT_MARKER, markersize=sq_ms,
+                        markerfacecolor="none", markeredgecolor=_LEFT_COLOR,
+                        markeredgewidth=0.45, alpha=0.75, zorder=3)
+            if draw_right:
+                ax2.plot(list(xr_i), list(yr_i), linestyle="none",
+                         marker=_RECT_MARKER, markersize=sq_ms,
+                         markerfacecolor="none", markeredgecolor=_RIGHT_COLOR,
+                         markeredgewidth=0.45, alpha=0.75, zorder=3)
             # Original data points — filled squares, on top
-            ax.plot(x_pos, ly, color=_LEFT_COLOR, linestyle="none",
-                    marker=_RECT_MARKER, markersize=ms,
-                    markerfacecolor=_LEFT_COLOR, markeredgewidth=0,
-                    alpha=1.0, zorder=5)
-            ax2.plot(x_pos, ry, color=_RIGHT_COLOR, linestyle="none",
-                     marker=_RECT_MARKER, markersize=ms,
-                     markerfacecolor=_RIGHT_COLOR, markeredgewidth=0,
-                     alpha=1.0, zorder=5)
+            if draw_left:
+                ax.plot(x_pos, ly, color=_LEFT_COLOR, linestyle="none",
+                        marker=_RECT_MARKER, markersize=ms,
+                        markerfacecolor=_LEFT_COLOR, markeredgewidth=0,
+                        alpha=1.0, zorder=5)
+            if draw_right:
+                ax2.plot(x_pos, ry, color=_RIGHT_COLOR, linestyle="none",
+                         marker=_RECT_MARKER, markersize=ms,
+                         markerfacecolor=_RIGHT_COLOR, markeredgewidth=0,
+                         alpha=1.0, zorder=5)
         else:
-            ax.plot(
-                x_pos, ly, color=_LEFT_COLOR, linestyle=ls,
-                linewidth=line_lw, marker=_RECT_MARKER, markersize=ms,
-                markerfacecolor=_LEFT_COLOR, markeredgewidth=0, zorder=3,
-            )
-            ax2.plot(
-                x_pos, ry, color=_RIGHT_COLOR, linestyle=ls,
-                linewidth=line_lw, marker=_RECT_MARKER, markersize=ms,
-                markerfacecolor=_RIGHT_COLOR, markeredgewidth=0, zorder=3,
-            )
+            if draw_left:
+                ax.plot(
+                    x_pos, ly, color=_LEFT_COLOR, linestyle=ls,
+                    linewidth=line_lw, marker=_RECT_MARKER, markersize=ms,
+                    markerfacecolor=_LEFT_COLOR, markeredgewidth=0, zorder=3,
+                )
+            if draw_right:
+                if data.left_plot == "bar_grouped":
+                    for s_idx, label in enumerate(data.right_series_labels):
+                        values = data.right_series_data[label][group]
+                        color = right_series_colors[s_idx % len(right_series_colors)]
+                        marker = right_series_markers[s_idx % len(right_series_markers)]
+                        ax2.plot(
+                            x_pos,
+                            values,
+                            color=color,
+                            linestyle=ls,
+                            linewidth=line_lw,
+                            marker=marker,
+                            markersize=ms,
+                            markerfacecolor=color,
+                            markeredgewidth=0,
+                            zorder=3,
+                        )
+                else:
+                    ax2.plot(
+                        x_pos, ry, color=_RIGHT_COLOR, linestyle=ls,
+                        linewidth=line_lw, marker=_RECT_MARKER, markersize=ms,
+                        markerfacecolor=_RIGHT_COLOR, markeredgewidth=0, zorder=3,
+                    )
 
     # ── Caption (below x-axis) ────────────────────────────────────────────────
     if data.caption:
         ax.set_xlabel(data.caption, fontsize=fs + 1, labelpad=1, color="black")
+
+    return ax2
+
+
+def _bbox_to_fig(fig: Figure, bbox: Bbox) -> Bbox:
+    return fig.transFigure.inverted().transform_bbox(bbox)
+
+
+def _artist_bbox_fig(fig: Figure, artist, renderer) -> Bbox:
+    return _bbox_to_fig(fig, artist.get_window_extent(renderer))
+
+
+def _row_axes(axs: List[Axes], twins: List[Axes], n_cols: int, row_idx: int) -> List[Axes]:
+    start = row_idx * n_cols
+    end = start + n_cols
+    return axs[start:end] + twins[start:end]
+
+
+def _row_top(axs: List[Axes], n_cols: int, row_idx: int) -> float:
+    start = row_idx * n_cols
+    end = start + n_cols
+    return max(ax.get_position().y1 for ax in axs[start:end])
+
+
+def _row_tight_bbox_fig(
+    fig: Figure,
+    axes: List[Axes],
+    renderer,
+) -> Bbox:
+    boxes = []
+    for ax in axes:
+        if not ax.get_visible():
+            continue
+        boxes.append(_bbox_to_fig(fig, ax.get_tightbbox(renderer)))
+        for artist in (ax.xaxis.label, ax.yaxis.label, ax.title):
+            if artist.get_visible() and artist.get_text():
+                boxes.append(_artist_bbox_fig(fig, artist, renderer))
+    return Bbox.union(boxes)
+
+
+def _move_axes_y(axes: List[Axes], delta: float) -> None:
+    for ax in axes:
+        pos = ax.get_position()
+        ax.set_position([pos.x0, pos.y0 + delta, pos.width, pos.height])
+
+
+def _anchor_row_legend(
+    fig: Figure,
+    leg,
+    row_top: float,
+    gap_fig: float,
+) -> None:
+    leg.set_bbox_to_anchor((0.5, row_top + gap_fig), transform=fig.transFigure)
 
 
 # ── Renderer ──────────────────────────────────────────────────────────────────
@@ -476,18 +607,114 @@ class SensitivityRenderer(BaseRenderer):
         cell_w_pt = cfg.width_pt / n_cols
         cell_h_pt = cell_w_pt / PHI
         fig_w_in  = cfg.width_in
-        fig_h_in  = n_rows * cell_h_pt / PT_PER_INCH
+        fig_h_in  = cfg.height_in if cfg.height_pt is not None else n_rows * cell_h_pt / PT_PER_INCH
 
         fig = plt.figure(figsize=(fig_w_in, fig_h_in))
         axs = [fig.add_subplot(n_rows, n_cols, i + 1) for i in range(n)]
 
-        for ax, data in zip(axs, datasets):
+        twins: List[Axes] = []
+        for idx, (ax, data) in enumerate(zip(axs, datasets)):
             self._configure_spines(ax)   # sets linewidth + clip_on baseline
             self._configure_ticks(ax)    # sets tick direction/size baseline
-            _draw_panel(fig, ax, data, cfg, n_cols=n_cols)
+            twins.append(_draw_panel(fig, ax, data, cfg, n_cols=n_cols, col_idx=idx % n_cols))
 
-        # Padding: minimal between panels so twin-axis tick labels don't clash.
-        fig.tight_layout(pad=0.2, w_pad=0.2, h_pad=0.4)
+        # Match the ablation renderer: use a physical 1-pt target gap for the
+        # initial layout, then measure and pack the rows precisely below.
+        gap_pt = 0.5
+        fig.tight_layout(pad=0.2, w_pad=0.2, h_pad=gap_pt / cfg.font_size_pt)
+        fig.canvas.draw()
+
+        if n_rows > 1 and n_cols == 3:
+            first = datasets[0]
+            top_handles = [
+                Line2D(
+                    [0],
+                    [0],
+                    color=_LEGEND_COLOR,
+                    linestyle=_LINE_STYLES[i % len(_LINE_STYLES)],
+                    marker="none",
+                    linewidth=1.0,
+                    label=g or "Series",
+                )
+                for i, g in enumerate(first.groups)
+            ]
+            top_leg = fig.legend(
+                handles=top_handles,
+                loc="lower center",
+                bbox_to_anchor=(0.5, _row_top(axs, n_cols, 0)),
+                ncol=len(top_handles),
+                frameon=False,
+                handlelength=1.35,
+                handletextpad=0.35,
+                columnspacing=0.75,
+            )
+
+            mixed = next((d for d in datasets if d.left_plot == "bar_first"), None)
+            if mixed is None:
+                mixed = next((d for d in datasets if d.left_plot == "bar_grouped"), None)
+            if mixed is not None:
+                right_series_markers = [_RECT_MARKER, "^", "o"]
+                bottom_handles = [
+                    Patch(
+                        facecolor=_BAR_COLORS[i % len(_BAR_COLORS)],
+                        edgecolor=_BAR_COLORS[i % len(_BAR_COLORS)],
+                        alpha=0.65,
+                        label=g or "Series",
+                    )
+                    for i, g in enumerate(mixed.groups)
+                ]
+                bottom_handles.extend(
+                    [
+                        Line2D(
+                            [0],
+                            [0],
+                            color=_LEGEND_COLOR,
+                            linestyle="none",
+                            marker=right_series_markers[j % len(right_series_markers)],
+                            markersize=cfg.font_size_pt * 0.55,
+                            markerfacecolor=_LEGEND_COLOR,
+                            markeredgewidth=0,
+                            label=label,
+                        )
+                        for j, label in enumerate(mixed.right_series_labels)
+                    ]
+                )
+                bottom_leg = fig.legend(
+                    handles=bottom_handles,
+                    loc="lower center",
+                    bbox_to_anchor=(0.5, _row_top(axs, n_cols, 1)),
+                    ncol=len(bottom_handles),
+                    frameon=False,
+                    handlelength=1.0,
+                    handletextpad=0.35,
+                    columnspacing=0.65,
+                )
+            else:
+                bottom_leg = None
+
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            fig_h_pt = fig.get_figheight() * PT_PER_INCH
+            gap_fig = gap_pt / fig_h_pt
+
+            _anchor_row_legend(fig, top_leg, _row_top(axs, n_cols, 0), gap_fig)
+            if bottom_leg is not None:
+                _anchor_row_legend(fig, bottom_leg, _row_top(axs, n_cols, 1), gap_fig)
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+
+            if bottom_leg is not None:
+                top_row_box = _row_tight_bbox_fig(
+                    fig,
+                    _row_axes(axs, twins, n_cols, 0),
+                    renderer,
+                )
+                bottom_leg_box = _artist_bbox_fig(fig, bottom_leg, renderer)
+                inter_row_gap = max(gap_fig, bottom_leg_box.height * 0.4)
+                delta = top_row_box.y0 - inter_row_gap - bottom_leg_box.y1
+                _move_axes_y(_row_axes(axs, twins, n_cols, 1), delta)
+                _anchor_row_legend(fig, bottom_leg, _row_top(axs, n_cols, 1), gap_fig)
+                fig.canvas.draw()
 
         self._save(fig)
         plt.close(fig)

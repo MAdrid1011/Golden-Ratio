@@ -426,7 +426,7 @@ class AblationRenderer(BaseRenderer):
         data_per_pt = (cur_ymax - cur_ymin) / ax_height_pt
 
         # ── Tighten top margin ─────────────────────────────────────────────────
-        axis_max_tight = data_max + top_pad_pt * data_per_pt
+        axis_max_tight = data_max if cfg.y_max is not None else data_max + top_pad_pt * data_per_pt
         tick_step = ticks[1] - ticks[0] if len(ticks) >= 2 else 1.0
         final_ticks = [t for t in ticks if t <= axis_max_tight + tick_step * 1e-9]
         ax.set_ylim(cur_ymin, axis_max_tight)
