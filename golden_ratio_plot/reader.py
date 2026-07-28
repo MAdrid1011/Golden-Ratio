@@ -23,6 +23,7 @@ class AblationData:
     data: Dict[Tuple[str, str], float] = field(default_factory=dict)
     value_label: str = "value"
     caption: str = ""
+    legend_note: str = ""
     major_group: Dict[str, str] = field(default_factory=dict)
     minor_group: Dict[str, str] = field(default_factory=dict)
 
@@ -74,6 +75,7 @@ def read_csv(path: str | Path) -> AblationData:
         has_minor = "minor_group" in fieldnames
 
         caption = ""
+        legend_note = ""
         major_group: Dict[str, str] = {}
         minor_group: Dict[str, str] = {}
         for i, row in enumerate(reader, start=2):
@@ -85,6 +87,8 @@ def read_csv(path: str | Path) -> AblationData:
             if group.startswith("__"):
                 if group == "__caption__":
                     caption = raw_value
+                elif group == "__legend__":
+                    legend_note = label or raw_value
                 continue
 
             if not group or not label:
@@ -119,6 +123,7 @@ def read_csv(path: str | Path) -> AblationData:
         data=data,
         value_label=value_col,
         caption=caption,
+        legend_note=legend_note,
         major_group=major_group,
         minor_group=minor_group,
     )

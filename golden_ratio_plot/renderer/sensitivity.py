@@ -147,6 +147,12 @@ def _axis_scale(
         d_max = d_center + expanded / 2.0
         data_span = expanded
 
+    if data_span < 1e-12 and stable:
+        center = d_min
+        data_span = max(abs(center) * 0.002, 0.01)
+        d_min = center - data_span / 2.0
+        d_max = center + data_span / 2.0
+
     if data_span < 1e-12:
         mag = abs(d_min) if abs(d_min) > 1e-12 else 1.0
         scale = _nice_step(mag / max(n_target - 1, 1))
@@ -294,8 +300,8 @@ def _draw_panel(
     # ax owns left / top / bottom spines; ax2 owns only the right spine.
     # All spines and tick marks are BLACK; only labels and axis titles carry colour.
     ax2 = ax.twinx()
-    ax.set_box_aspect(1)
-    ax2.set_box_aspect(1)
+    ax.set_box_aspect(1.0)
+    ax2.set_box_aspect(1.0)
     for s in ("top", "left", "bottom"):
         ax2.spines[s].set_visible(False)
     ax2.spines["right"].set_linewidth(cfg.spine_linewidth_pt)
@@ -386,19 +392,18 @@ def _draw_panel(
         )
 
     # ── Axis labels ───────────────────────────────────────────────────────────
-    if col_idx == 0:
-        ax.set_ylabel(data.left_label, color=_LEFT_COLOR, fontsize=fs, labelpad=1)
-    else:
-        ax.set_ylabel("")
-    if col_idx == n_cols - 1:
-        ax2.set_ylabel(data.right_label, color=_RIGHT_COLOR, fontsize=fs, labelpad=1)
-    else:
-        ax2.set_ylabel("")
-        ax2.tick_params(axis="y", labelright=False)
+    ax.set_ylabel(data.left_label, color=_LEFT_COLOR, fontsize=fs, labelpad=1)
+    ax2.set_ylabel(data.right_label, color=_RIGHT_COLOR, fontsize=fs, labelpad=1)
 
     # ── X-axis ticks and limits ───────────────────────────────────────────────
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(data.x_values, fontsize=fs)
+    x_tick_labels = list(data.x_values)
+    if n_cols > 1 and n_x > 5:
+        x_tick_labels = [
+            label if i % 2 == 0 or i == n_x - 1 else ""
+            for i, label in enumerate(x_tick_labels)
+        ]
+    ax.set_xticklabels(x_tick_labels, fontsize=fs)
     margin = 0.5 if n_x > 1 else 1.0
     ax.set_xlim(-margin, n_x - 1 + margin)
 

@@ -59,11 +59,34 @@ class PlotConfig:
     y_ticks: int = 5                      # target number of y-axis ticks
     y_min: Optional[float] = None         # None → auto
     y_max: Optional[float] = None         # None → auto
+    right_y_min: Optional[float] = None   # explicit lower bound for an overlaid right axis
+    right_y_max: Optional[float] = None   # explicit upper bound for an overlaid right axis
+    y_tick_suffix: str = ""
+    right_y_tick_suffix: str = ""
 
     # ── Bar display ──────────────────────────────────────────────────────────
     show_values: bool = False             # print numeric value above each bar
     two_level_xaxis: bool = False         # use major_group/minor_group CSV columns
     panel_cols: int = 1                   # columns for multi-panel ablation/decomp figures
+    pair_last_bars: bool = False          # remove the gap between the last two decomp bars
+    compact_decomp_legend: bool = False   # encode decomp path hue and stage lightness separately
+    compact_decomp_legend_rows: int = 1
+    shared_panel_legend: bool = False
+    decomp_bar_legend_title: str = "Path"
+    decomp_segment_legend_title: str = "Stage"
+    show_segment_delta: bool = False      # annotate the upper part of two-segment bars
+    segment_delta_mode: str = "percent"  # "percent" | "value"
+    segment_delta_decimals: int = 1
+    segment_delta_font_size_pt: Optional[float] = None
+    show_cumulative_boundaries: bool = False
+    cumulative_boundary_decimals: int = 1
+    cumulative_boundary_font_size_pt: Optional[float] = None
+    decomp_bar_only_legend: bool = False
+    decomp_right_bar: str = ""
+    decomp_right_y_label: str = ""
+    legend_note_first: bool = False       # place decomp legend-note row above data-series rows
+    inline_legend_note: bool = False      # append the legend note to the final series label
+    parent_label_gap_pt: float = 2.0      # vertical gap between two-level x-axis labels
 
     # ── Colors ───────────────────────────────────────────────────────────────
     # Custom palette: list of hex/CSS color strings, one per unique label.

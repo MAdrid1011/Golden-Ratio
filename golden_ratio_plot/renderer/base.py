@@ -52,6 +52,10 @@ class BaseRenderer(ABC):
             {
                 "font.family": "serif",
                 "font.serif": [cfg.font_family, "DejaVu Serif", "serif"],
+                "mathtext.fontset": "stix",
+                "mathtext.rm": "STIXGeneral",
+                "mathtext.it": "STIXGeneral:italic",
+                "mathtext.bf": "STIXGeneral:bold",
                 "font.size": cfg.font_size_pt,
                 "axes.labelsize": cfg.font_size_pt,
                 "xtick.labelsize": cfg.font_size_pt,

@@ -276,29 +276,70 @@ class AblationRenderer(BaseRenderer):
         if line_data is not None and line_color is not None:
             ax2 = ax.twinx()
 
-            for g, group in enumerate(data.groups):
-                xs = [positions[g][l_idx] for l_idx in range(data.n_labels)]
-                ys = [line_data.data.get((group, label)) for label in data.labels]
-                if any(y is None for y in ys):
-                    continue
-                ax2.plot(
-                    xs, ys,
-                    color=line_color,
-                    linestyle="--",
-                    linewidth=0.8,
-                    marker="o",
-                    markersize=2.0,
-                    markerfacecolor=line_color,
-                    markeredgewidth=0,
-                    zorder=5,
-                )
+            if line_data.n_labels == 1:
+                line_label = line_data.labels[0]
+                ys = [line_data.data.get((group, line_label)) for group in data.groups]
+                if all(y is not None for y in ys):
+                    ranges = [(0, len(data.groups))]
+                    if cfg.two_level_xaxis and data.major_group:
+                        ranges = []
+                        start = 0
+                        current = data.major_group.get(data.groups[0], data.groups[0])
+                        for i in range(1, len(data.groups) + 1):
+                            parent = (
+                                data.major_group.get(data.groups[i], data.groups[i])
+                                if i < len(data.groups)
+                                else None
+                            )
+                            if parent != current:
+                                ranges.append((start, i))
+                                if i < len(data.groups):
+                                    start = i
+                                    current = parent
+                    for start, end in ranges:
+                        ax2.plot(
+                            group_centers[start:end], ys[start:end],
+                            color=line_color,
+                            linestyle="--",
+                            linewidth=0.8,
+                            marker="o",
+                            markersize=2.0,
+                            markerfacecolor=line_color,
+                            markeredgewidth=0,
+                            zorder=5,
+                        )
+            else:
+                for g, group in enumerate(data.groups):
+                    xs = [positions[g][l_idx] for l_idx in range(data.n_labels)]
+                    ys = [line_data.data.get((group, label)) for label in data.labels]
+                    if any(y is None for y in ys):
+                        continue
+                    ax2.plot(
+                        xs, ys,
+                        color=line_color,
+                        linestyle="--",
+                        linewidth=0.8,
+                        marker="o",
+                        markersize=2.0,
+                        markerfacecolor=line_color,
+                        markeredgewidth=0,
+                        zorder=5,
+                    )
 
-            # Provisional right-axis range (same n_ticks as left, synced later)
-            _, r_max_prov, r_ticks_prov = nice_range(
-                0.0, line_data_max, n=cfg.y_ticks, top_padding_intervals=0.618
-            )
-            ax2.set_ylim(0.0, r_max_prov)
-            ax2.set_yticks(r_ticks_prov)
+            if cfg.right_y_min is not None or cfg.right_y_max is not None:
+                right_min = cfg.right_y_min if cfg.right_y_min is not None else 0.0
+                right_max = cfg.right_y_max if cfg.right_y_max is not None else line_data_max
+                n_right_ticks = max(2, len(ticks))
+                right_step = (right_max - right_min) / (n_right_ticks - 1)
+                right_ticks = [right_min + i * right_step for i in range(n_right_ticks)]
+                ax2.set_ylim(right_min, right_max)
+                ax2.set_yticks(right_ticks)
+            else:
+                _, r_max_prov, r_ticks_prov = nice_range(
+                    0.0, line_data_max, n=cfg.y_ticks, top_padding_intervals=0.618
+                )
+                ax2.set_ylim(0.0, r_max_prov)
+                ax2.set_yticks(r_ticks_prov)
             ax2.set_ylabel(line_y_label, fontsize=max(xlbl_fontsize, cfg.font_size_pt))
             ax2.tick_params(
                 axis="y", which="major",
@@ -374,12 +415,15 @@ class AblationRenderer(BaseRenderer):
                 for i, name in enumerate(data.groups)
                 if i < len(_CIRCLED)
             ]
+        elif data.legend_note and not cfg.inline_legend_note:
+            mapping_labels = [data.legend_note]
 
         all_legs, n_color_rows = _draw_legend_init(
             fig, ax, colors, color_labels, mapping_labels, cfg,
             font_size=xlbl_fontsize,
             line_color=line_color,
             line_legend_key=line_legend_key,
+            legend_note=data.legend_note if cfg.inline_legend_note else "",
         )
 
         top_pad_pt = _TOP_PAD_PT
@@ -437,21 +481,29 @@ class AblationRenderer(BaseRenderer):
 
         # ── Sync right axis — physical alignment + clean tick labels ──────────
         if ax2 is not None:
-            left_step = (
-                (final_ticks[1] - final_ticks[0]) if len(final_ticks) >= 2 else 1.0
-            )
-            scale_min = line_data_max / axis_max_tight if axis_max_tight > 0 else 1.0
-            right_step_min = left_step * scale_min
-            nice_right_step = _nice_ceil(right_step_min)
-            nice_scale = nice_right_step / left_step if left_step > 0 else 1.0
+            if cfg.right_y_min is not None or cfg.right_y_max is not None:
+                right_ymin = cfg.right_y_min if cfg.right_y_min is not None else 0.0
+                right_ymax = cfg.right_y_max if cfg.right_y_max is not None else line_data_max
+                n_right_ticks = max(2, len(final_ticks))
+                right_step = (right_ymax - right_ymin) / (n_right_ticks - 1)
+                right_ticks = [right_ymin + i * right_step for i in range(n_right_ticks)]
+                ax2.set_ylim(right_ymin, right_ymax)
+                ax2.set_yticks(right_ticks)
+                dp = _decimal_places(right_step)
+            else:
+                left_step = (
+                    (final_ticks[1] - final_ticks[0]) if len(final_ticks) >= 2 else 1.0
+                )
+                scale_min = line_data_max / axis_max_tight if axis_max_tight > 0 else 1.0
+                right_step_min = left_step * scale_min
+                nice_right_step = _nice_ceil(right_step_min)
+                nice_scale = nice_right_step / left_step if left_step > 0 else 1.0
 
-            right_ymax  = axis_max_tight * nice_scale
-            right_ticks = [i * nice_right_step for i in range(len(final_ticks))]
-
-            ax2.set_ylim(0.0, right_ymax)
-            ax2.set_yticks(right_ticks)
-
-            dp = _decimal_places(nice_right_step)
+                right_ymax = axis_max_tight * nice_scale
+                right_ticks = [i * nice_right_step for i in range(len(final_ticks))]
+                ax2.set_ylim(0.0, right_ymax)
+                ax2.set_yticks(right_ticks)
+                dp = _decimal_places(nice_right_step)
             ax2.yaxis.set_major_formatter(_mticker.FormatStrFormatter(f"%.{dp}f"))
 
         # ── Vertically centre short x-tick labels within the tallest label's space ─
@@ -744,6 +796,9 @@ def _group_labels(
     """
     _XLBL_MIN_PT = 5.0
 
+    if groups and all(re.fullmatch(r"\(\d+\)", g) for g in groups):
+        return False, groups, 0, min(label_font_size, 7.0)
+
     for f in range(int(label_font_size), max(int(_XLBL_MIN_PT) - 1, int(label_font_size) - 5), -1):
         fs = float(f)
         if fs < _XLBL_MIN_PT:
@@ -819,8 +874,14 @@ def _split_label_key(text: str) -> Tuple[str, str]:
     Used to separate the y-axis title from the short legend key stored in the
     CSV value-column header, e.g. ``'Average Load Time (Load)'``.
     """
-    m = re.match(r"^(.*?)\s*\(([^)]+)\)\s*$", text.strip())
-    return (m.group(1).strip(), m.group(2).strip()) if m else (text.strip(), "")
+    stripped = text.strip()
+    m = re.match(r"^(.*?)\s*\(([^)]+)\)\s*$", stripped)
+    if not m:
+        return stripped, ""
+    suffix = m.group(2).strip()
+    if suffix in {"%", "ms", "s", "J", "W", "FPS"}:
+        return stripped, ""
+    return m.group(1).strip(), suffix
 
 
 # ── Legend drawing ────────────────────────────────────────────────────────────
@@ -849,6 +910,7 @@ def _draw_legend_init(
     font_size: Optional[float] = None,
     line_color: Optional[Tuple[float, float, float]] = None,
     line_legend_key: str = "",
+    legend_note: str = "",
 ) -> Tuple[List, int]:
     """Phase 1 of legend drawing: create all legend artists at y=1.01.
 
@@ -882,8 +944,12 @@ def _draw_legend_init(
         handles.append(dot_handle)
         labels.append(line_legend_key)
 
-    # Greedy bin-packing: rows ordered top-to-bottom.
-    rows = _greedy_rows(labels, handles, cfg, font_size=fs)
+    if legend_note and labels:
+        labels[-1] = f"{labels[-1]} {legend_note}"
+        rows = [(handles, labels)]
+    else:
+        # Greedy bin-packing: rows ordered top-to-bottom.
+        rows = _greedy_rows(labels, handles, cfg, font_size=fs)
     n_color_rows = len(rows)
 
     legend_kw = _make_legend_kw(fs)

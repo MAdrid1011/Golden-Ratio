@@ -13,6 +13,18 @@ python main.py --mode decomp \
   --input examples/decomp_pipeline.csv \
   --output out/Decomp_pipeline
 
+# Two-part decomposition with an internal percentage arrow
+python main.py --mode decomp \
+  --input examples/decomp_pipeline.csv \
+  --output out/Decomp_delta \
+  --show_segment_delta --segment_delta_mode percent
+
+# Cumulative decomposition with every segment boundary labeled
+python main.py --mode decomp \
+  --input examples/decomp_pipeline.csv \
+  --output out/Decomp_cumulative \
+  --show_cumulative_boundaries --decomp_bar_only_legend
+
 # Multiple vertically stacked decomposition panels
 python main.py --mode decomp \
   --inputs panel_a.csv panel_b.csv \
@@ -177,7 +189,23 @@ Entries are arranged in as many columns as fit in a single legend row at the top
 | `--y_ticks` | `5` | Target number of y-axis ticks. |
 | `--y_min` | `0` | Override y-axis lower bound. |
 | `--y_max` | *(auto)* | Override y-axis upper bound. |
+| `--y_tick_suffix` | empty | Append a suffix such as `%` to left-axis tick labels. |
+| `--right_y_tick_suffix` | empty | Append a suffix to right-axis tick labels. |
 | `--two_level_xaxis` | off | Use `major_group` and `minor_group` columns for parent/child x-axis labels. |
+| `--show_segment_delta` | off | For every two-segment bar, draw a double-headed arrow inside the upper segment. |
+| `--segment_delta_mode` | `percent` | Label the upper segment by its percentage of the total or by its absolute `value`. |
+| `--segment_delta_decimals` | `1` | Decimal places in the internal delta label. |
+| `--segment_delta_font_size_pt` | auto | Requested font size for internal delta labels, capped to fit within the physical bar width. |
+| `--show_cumulative_boundaries` | off | Label each stacked-segment boundary with its segment name and cumulative value. |
+| `--cumulative_boundary_decimals` | `1` | Decimal places in cumulative boundary labels. |
+| `--cumulative_boundary_font_size_pt` | auto | Requested cumulative-label size, capped to fit within the physical bar width. |
+| `--decomp_bar_only_legend` | off | Show one legend entry per comparison bar and omit segment entries. |
+| `--compact_decomp_legend_rows` | `1` | Keep compact legend dimensions on one row or split them across `2` rows. |
+| `--shared_panel_legend` | off | In a multi-panel decomp figure, draw the common legend only above the first panel. |
+| `--decomp_bar_legend_title` | `Path` | Heading for comparison bars in the compact legend. |
+| `--decomp_segment_legend_title` | `Stage` | Heading for segments in the compact legend. |
+| `--decomp_right_bar` | empty | Render the named comparison bar against a secondary right y-axis. |
+| `--decomp_right_y_label` | empty | Label for the optional secondary right y-axis. |
 
 ---
 

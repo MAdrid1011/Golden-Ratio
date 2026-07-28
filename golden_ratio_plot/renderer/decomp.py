@@ -62,7 +62,7 @@ _BAR_L_SOLID: float = 0.52  # lightness of an unsegmented (solid) bar
 
 _SEP_LW:    float = 1.0
 _SEP_COLOR: str   = "black"
-_PARENT_LABEL_GAP_PT: float = 1.0
+_PARENT_LABEL_GAP_PT: float = 2.0
 _PARENT_BOUNDARY_PAD_PT: float = 1.0
 
 
@@ -131,6 +131,13 @@ def _decomp_legend_rows(
     use_custom_palette: bool,
     width_pt: float,
     font_size: float,
+    compact: bool = False,
+    compact_rows: int = 1,
+    bar_legend_title: str = "Path",
+    segment_legend_title: str = "Stage",
+    legend_note_first: bool = False,
+    inline_legend_note: bool = False,
+    bar_only: bool = False,
 ) -> List[Tuple[list, List[str]]]:
     """Build legend rows for decomp charts.
 
@@ -139,7 +146,90 @@ def _decomp_legend_rows(
     read as "bar name: segment1 segment2 ..." instead of showing repeated
     segment labels without the bar context.
     """
-    if _has_shared_stacked_segments(data):
+    if bar_only:
+        handles: list = []
+        labels: List[str] = []
+        for b_idx, bar in enumerate(data.bars):
+            segs = data.segments.get(bar, [""])
+            colors = _colors_for_segments(
+                b_idx, len(data.bars), len(segs),
+                custom_colors, use_custom_palette,
+            )
+            handles.append(
+                mpatches.Patch(
+                    facecolor=colors[len(colors) // 2],
+                    edgecolor="black",
+                    linewidth=0.4,
+                )
+            )
+            labels.append(bar)
+        return _greedy_rows_util(labels, handles, width_pt, font_size)
+
+    if _has_shared_stacked_segments(data) and compact:
+            bar_handles: list = [
+                mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0)
+            ]
+            bar_labels: List[str] = [f"{bar_legend_title}:"]
+            for b_idx, bar in enumerate(data.bars):
+                colors = _colors_for_segments(
+                    b_idx, len(data.bars), len(data.segments[bar]),
+                    custom_colors, use_custom_palette,
+                )
+                bar_handles.append(
+                    mpatches.Patch(
+                        facecolor=colors[len(colors) // 2],
+                        edgecolor="black",
+                        linewidth=0.4,
+                    )
+                )
+                bar_labels.append(bar)
+
+            segs = data.segments[data.bars[0]]
+            segment_handles: list = [
+                mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0)
+            ]
+            segment_labels: List[str] = [f"{segment_legend_title}:"]
+            for s_idx, seg in enumerate(segs):
+                lightness = (
+                    _SEG_L_DARK
+                    if len(segs) == 1
+                    else _SEG_L_DARK
+                    + s_idx * (_SEG_L_LIGHT - _SEG_L_DARK) / (len(segs) - 1)
+                )
+                segment_handles.append(
+                    mpatches.Patch(
+                        facecolor=colorsys.hls_to_rgb(0.0, lightness, 0.0),
+                        edgecolor="black",
+                        linewidth=0.4,
+                    )
+                )
+                segment_labels.append(seg)
+
+            rows: List[Tuple[list, List[str]]] = []
+            if data.legend_note:
+                note_row = (
+                    [mpatches.Patch(
+                        facecolor="none", edgecolor="none", linewidth=0.0
+                    )],
+                    [data.legend_note],
+                )
+                if legend_note_first:
+                    rows.append(note_row)
+            if compact_rows == 2:
+                rows.extend([
+                    (bar_handles, bar_labels),
+                    (segment_handles, segment_labels),
+                ])
+            else:
+                rows.append((
+                    bar_handles + segment_handles,
+                    bar_labels + segment_labels,
+                ))
+            if data.legend_note and not legend_note_first:
+                rows.append(note_row)
+            return rows
+
+    if _all_bars_stacked(data):
         rows: List[Tuple[list, List[str]]] = []
         for b_idx, bar in enumerate(data.bars):
             segs = data.segments.get(bar, [""])
@@ -164,10 +254,14 @@ def _decomp_legend_rows(
                 labels.append(seg)
             rows.append((handles, labels))
         if data.legend_note:
-            rows.append((
+            note_row = (
                 [mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0)],
                 [data.legend_note],
-            ))
+            )
+            if legend_note_first:
+                rows.insert(0, note_row)
+            else:
+                rows.append(note_row)
         return rows
 
     handles: List[mpatches.Patch] = []
@@ -200,12 +294,25 @@ def _decomp_legend_rows(
                 )
                 labels.append(seg)
 
-    if data.legend_note:
+    if data.legend_note and inline_legend_note and labels:
+        labels[-1] = f"{labels[-1]} {data.legend_note}"
+        return [(handles, labels)]
+
+    note_row = None
+    if data.legend_note and not inline_legend_note:
+        note_row = (
+            [mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0)],
+            [data.legend_note],
+        )
+    if data.legend_note and not legend_note_first and not inline_legend_note:
         handles.append(
             mpatches.Patch(facecolor="none", edgecolor="none", linewidth=0.0)
         )
         labels.append(data.legend_note)
-    return _greedy_rows_util(labels, handles, width_pt, font_size)
+    rows = _greedy_rows_util(labels, handles, width_pt, font_size)
+    if note_row is not None and legend_note_first:
+        rows.insert(0, note_row)
+    return rows
 
 
 def _has_shared_stacked_segments(data: DecompData) -> bool:
@@ -219,6 +326,13 @@ def _has_shared_stacked_segments(data: DecompData) -> bool:
         if segs != first:
             return False
     return True
+
+
+def _all_bars_stacked(data: DecompData) -> bool:
+    return all(
+        segs and not (len(segs) == 1 and segs[0] == "")
+        for segs in (data.segments.get(bar, [""]) for bar in data.bars)
+    )
 
 
 
@@ -249,6 +363,11 @@ class DecompRenderer(BaseRenderer):
             self._configure_spines(ax)
             self._configure_ticks(ax)
             self._draw(fig, ax, datasets[idx], finalize=False)
+        if cfg.shared_panel_legend:
+            for ax in axes[1:]:
+                for leg in getattr(ax, "_golden_ratio_legend_rows", []):
+                    leg.remove()
+                setattr(ax, "_golden_ratio_legend_rows", [])
         h_pad = 0.9 if ncols > 1 else 1.0 / cfg.font_size_pt
         fig.tight_layout(h_pad=h_pad, pad=0.3)
         fig.canvas.draw()
@@ -292,14 +411,44 @@ class DecompRenderer(BaseRenderer):
             for b_idx, b in enumerate(data.bars):
                 centers[(g, b)] = x
                 if b_idx < n_bars - 1:
-                    x += bar_w + intra
+                    pair_gap = (
+                        0.0
+                        if cfg.pair_last_bars and b_idx == n_bars - 2
+                        else intra
+                    )
+                    x += bar_w + pair_gap
                 elif g_idx < n_groups - 1:
                     x += bar_w + inter
         total_w = x + bar_w / 2.0 + inter / 2.0
         ax.set_xlim(0.0, total_w)
+        axes_width_pt = (
+            cfg.width_pt * _AXES_WIDTH_FRACTION / panel_cols
+        )
+        physical_bar_width_pt = axes_width_pt * bar_w / total_w
+        requested_delta_fs = (
+            cfg.segment_delta_font_size_pt
+            if cfg.segment_delta_font_size_pt is not None
+            else fs
+        )
+        delta_font_size = min(
+            requested_delta_fs,
+            max(6.0, physical_bar_width_pt * 0.72),
+        )
+        requested_boundary_fs = (
+            cfg.cumulative_boundary_font_size_pt
+            if cfg.cumulative_boundary_font_size_pt is not None
+            else fs
+        )
+        boundary_font_size = min(
+            requested_boundary_fs,
+            max(6.0, physical_bar_width_pt * 0.28),
+        )
 
         # ── Draw stacked bars ───────────────────────────────────────────────
         y_max_data = 0.0
+        right_bar = cfg.decomp_right_bar
+        ax2 = ax.twinx() if right_bar and right_bar in data.bars else None
+        right_y_max_data = 0.0
         custom_colors = palette_from_config(n_bars, cfg.custom_palette, cfg.palette_hue)
         use_custom_palette = bool(cfg.custom_palette)
         for b_idx, bar in enumerate(data.bars):
@@ -314,15 +463,60 @@ class DecompRenderer(BaseRenderer):
             for g in data.groups:
                 cx     = centers[(g, bar)]
                 bottom = 0.0
+                target_ax = ax2 if ax2 is not None and bar == right_bar else ax
                 for s_idx, seg in enumerate(segs):
                     val = data.values.get((g, bar, seg), 0.0)
-                    ax.bar(cx, val, width=bar_w, bottom=bottom,
-                           color=colors[s_idx], zorder=2,
-                           edgecolor="black", linewidth=0.5)
+                    target_ax.bar(
+                        cx, val, width=bar_w, bottom=bottom,
+                        color=colors[s_idx], zorder=2,
+                        edgecolor="black", linewidth=0.5,
+                    )
                     bottom += val
-                y_max_data = max(y_max_data, bottom)
+                if (
+                    cfg.show_cumulative_boundaries
+                    and len(segs) > 1
+                    and bottom > 0
+                ):
+                    _draw_cumulative_boundaries(
+                        target_ax,
+                        cx=cx,
+                        bar_width=bar_w,
+                        segments=segs,
+                        values=[
+                            data.values.get((g, bar, seg), 0.0)
+                            for seg in segs
+                        ],
+                        colors=colors,
+                        fontsize=boundary_font_size,
+                        decimals=cfg.cumulative_boundary_decimals,
+                    )
+                if (
+                    target_ax is ax
+                    and cfg.show_segment_delta
+                    and len(segs) == 2
+                    and bottom > 0
+                ):
+                    lower = data.values.get((g, bar, segs[0]), 0.0)
+                    upper = data.values.get((g, bar, segs[1]), 0.0)
+                    if upper > 0:
+                        _draw_segment_delta(
+                            ax,
+                            cx=cx,
+                            bar_width=bar_w,
+                            lower=lower,
+                            upper=upper,
+                            total=bottom,
+                            facecolor=colors[1],
+                            fontsize=delta_font_size,
+                            mode=cfg.segment_delta_mode,
+                            decimals=cfg.segment_delta_decimals,
+                        )
+                if target_ax is ax:
+                    y_max_data = max(y_max_data, bottom)
+                else:
+                    right_y_max_data = max(right_y_max_data, bottom)
                 if cfg.show_values and bottom > 0:
-                    ax.text(
+                    target_ax.text(
                         cx, bottom, f"{bottom:.1f}",
                         ha="center", va="bottom",
                         fontsize=fs, color="black", zorder=5,
@@ -334,10 +528,18 @@ class DecompRenderer(BaseRenderer):
         if cfg.y_max is not None:
             axis_min = y_lo
             axis_max = cfg.y_max
-            ticks = [
-                t for t in nice_ticks(axis_min, axis_max, n=cfg.y_ticks)
-                if axis_min <= t <= axis_max
-            ]
+            if ax2 is not None:
+                tick_count = max(2, cfg.y_ticks)
+                tick_step = (axis_max - axis_min) / (tick_count - 1)
+                ticks = [
+                    axis_min + i * tick_step
+                    for i in range(tick_count)
+                ]
+            else:
+                ticks = [
+                    t for t in nice_ticks(axis_min, axis_max, n=cfg.y_ticks)
+                    if axis_min <= t <= axis_max
+                ]
         else:
             axis_min, axis_max, ticks = nice_range(
                 y_lo, y_hi, n=cfg.y_ticks, top_padding_intervals=0.15
@@ -370,11 +572,56 @@ class DecompRenderer(BaseRenderer):
 
         ax.yaxis.set_major_formatter(
             mticker.FuncFormatter(
-                lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}"
+                lambda v, _: (
+                    f"{v:.0f}" if v == int(v) else f"{v:.1f}"
+                ) + cfg.y_tick_suffix
             )
         )
         ax.tick_params(axis="y", which="major", pad=1.5)
         ax.set_ylabel(data.y_label, fontsize=fs, labelpad=2)
+
+        if ax2 is not None:
+            right_min = (
+                cfg.right_y_min if cfg.right_y_min is not None else 0.0
+            )
+            right_max = (
+                cfg.right_y_max
+                if cfg.right_y_max is not None
+                else right_y_max_data
+            )
+            right_ticks = [
+                t for t in nice_ticks(right_min, right_max, n=cfg.y_ticks)
+                if right_min <= t <= right_max
+            ]
+            ax2.set_ylim(right_min, right_max)
+            ax2.set_yticks(right_ticks)
+            ax2.yaxis.set_major_formatter(
+                mticker.FuncFormatter(
+                    lambda v, _: (
+                        f"{v:.0f}" if v == int(v) else f"{v:.1f}"
+                    ) + cfg.right_y_tick_suffix
+                )
+            )
+            ax2.set_ylabel(
+                cfg.decomp_right_y_label or right_bar,
+                fontsize=fs,
+                labelpad=2,
+            )
+            ax2.tick_params(
+                axis="y",
+                which="major",
+                direction="out",
+                width=cfg.spine_linewidth_pt,
+                length=3.0,
+                pad=1.5,
+                right=True,
+                left=False,
+            )
+            ax2.tick_params(axis="y", which="minor", length=0)
+            for spine_name in ("top", "bottom", "left"):
+                ax2.spines[spine_name].set_visible(False)
+            ax2.spines["right"].set_linewidth(cfg.spine_linewidth_pt)
+            ax2.spines["right"].set_clip_on(False)
 
         # ── X-axis labels ────────────────────────────────────────────────────
         group_centers = [
@@ -393,7 +640,7 @@ class DecompRenderer(BaseRenderer):
         parent_boundary_bottom = None
         if cfg.two_level_xaxis and data.major_group:
             parent_label_y, parent_boundary_bottom = _two_level_xaxis_label_layout(
-                fig, ax, xlbl_fs
+                fig, ax, xlbl_fs, gap_pt=cfg.parent_label_gap_pt
             )
             _draw_parent_xlabels(
                 ax, data.groups, group_centers, data.major_group,
@@ -436,7 +683,14 @@ class DecompRenderer(BaseRenderer):
             cfg.width_pt * _AXES_WIDTH_FRACTION / panel_cols
         )
         rows = _decomp_legend_rows(
-            data, custom_colors, use_custom_palette, legend_width_pt, xlbl_fs
+            data, custom_colors, use_custom_palette, legend_width_pt, xlbl_fs,
+            compact=cfg.compact_decomp_legend,
+            compact_rows=cfg.compact_decomp_legend_rows,
+            bar_legend_title=cfg.decomp_bar_legend_title,
+            segment_legend_title=cfg.decomp_segment_legend_title,
+            legend_note_first=cfg.legend_note_first,
+            inline_legend_note=cfg.inline_legend_note,
+            bar_only=cfg.decomp_bar_only_legend,
         )
         all_legs = _stack_legend_rows(ax, rows, xlbl_fs)
         setattr(ax, "_golden_ratio_legend_rows", all_legs)
@@ -458,6 +712,121 @@ class DecompRenderer(BaseRenderer):
             fig.canvas.draw()
             renderer = fig.canvas.get_renderer()
             _finalize_legend_rows(ax, all_legs, len(rows), renderer)
+
+
+def _draw_segment_delta(
+    ax: Axes,
+    *,
+    cx: float,
+    bar_width: float,
+    lower: float,
+    upper: float,
+    total: float,
+    facecolor: Tuple[float, float, float],
+    fontsize: float,
+    mode: str,
+    decimals: int,
+) -> None:
+    """Annotate the upper portion of a two-segment bar inside the bar.
+
+    The double-headed arrow spans the second segment.  ``percent`` reports that
+    segment as a share of the full bar, matching rejection- or savings-ratio
+    annotations.  ``value`` reports the segment's absolute height.
+    """
+    if upper <= 0.0 or total <= 0.0:
+        return
+
+    endpoint_pad = min(upper * 0.06, total * 0.012)
+    y0 = lower + endpoint_pad
+    y1 = lower + upper - endpoint_pad
+    if y1 <= y0:
+        return
+
+    ax.annotate(
+        "",
+        xy=(cx, y1),
+        xytext=(cx, y0),
+        arrowprops={
+            "arrowstyle": "<->",
+            "color": "black",
+            "linewidth": 0.5,
+            "mutation_scale": 5.0,
+            "shrinkA": 0.0,
+            "shrinkB": 0.0,
+        },
+        zorder=5,
+    )
+
+    if mode == "value":
+        label = f"{upper:.{decimals}f}"
+    else:
+        label = f"{100.0 * upper / total:.{decimals}f}%"
+
+    ax.text(
+        cx,
+        lower + upper / 2.0,
+        label,
+        ha="center",
+        va="center",
+        rotation=90,
+        rotation_mode="anchor",
+        fontsize=fontsize,
+        color="black",
+        zorder=6,
+        bbox={
+            "boxstyle": "square,pad=0.01",
+            "facecolor": facecolor,
+            "edgecolor": "none",
+            "alpha": 1.0,
+        },
+    )
+
+
+def _draw_cumulative_boundaries(
+    ax: Axes,
+    *,
+    cx: float,
+    bar_width: float,
+    segments: List[str],
+    values: List[float],
+    colors: List[Tuple[float, float, float]],
+    fontsize: float,
+    decimals: int,
+) -> None:
+    """Label cumulative values at every boundary of a stacked bar."""
+    cumulative = 0.0
+    for idx, (segment, value) in enumerate(zip(segments, values)):
+        cumulative += value
+        if value <= 0.0:
+            continue
+        value_text = f"{cumulative:.{decimals}f}"
+        if decimals > 0:
+            value_text = value_text.rstrip("0").rstrip(".")
+        label = f"{segment}:{value_text}" if segment else value_text
+        ax.hlines(
+            cumulative,
+            cx - bar_width * 0.46,
+            cx + bar_width * 0.46,
+            colors="black",
+            linewidth=0.35,
+            zorder=5,
+        )
+        ax.text(
+            cx,
+            cumulative,
+            label,
+            ha="center",
+            va="top",
+            fontsize=fontsize,
+            color="black",
+            zorder=6,
+            bbox={
+                "boxstyle": "square,pad=0.01",
+                "facecolor": colors[idx],
+                "edgecolor": "none",
+                "alpha": 1.0,
+            },
+        )
 
 
 def _draw_parent_xlabels(
@@ -496,6 +865,8 @@ def _two_level_xaxis_label_layout(
     fig: Figure,
     ax: Axes,
     fontsize: float,
+    *,
+    gap_pt: float = _PARENT_LABEL_GAP_PT,
 ) -> Tuple[float, float]:
     """Return parent-label and boundary positions from rendered tick labels."""
     fig.canvas.draw()
@@ -508,7 +879,7 @@ def _two_level_xaxis_label_layout(
 
     if axes_bbox.height <= 0 or not tick_labels:
         line_h_axes = _points_to_axes_y(fig, ax, fontsize * 1.25)
-        gap_axes = _points_to_axes_y(fig, ax, _PARENT_LABEL_GAP_PT)
+        gap_axes = _points_to_axes_y(fig, ax, gap_pt)
         parent_y = -line_h_axes - gap_axes
         return parent_y, parent_y - line_h_axes
 
@@ -517,7 +888,7 @@ def _two_level_xaxis_label_layout(
         for lbl in tick_labels
     )
     parent_top_px = child_bottom_px - _points_to_pixels(
-        fig, _PARENT_LABEL_GAP_PT
+        fig, gap_pt
     )
     parent_y = ax.transAxes.inverted().transform(
         (axes_bbox.x0, parent_top_px)

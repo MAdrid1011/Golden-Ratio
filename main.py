@@ -71,6 +71,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Override y-axis minimum.")
     p.add_argument("--y_max", type=float, default=None,
                    help="Override y-axis maximum.")
+    p.add_argument("--right_y_min", type=float, default=None,
+                   help="Override the lower bound of an overlaid right y-axis.")
+    p.add_argument("--right_y_max", type=float, default=None,
+                   help="Override the upper bound of an overlaid right y-axis.")
+    p.add_argument("--y_tick_suffix", default="",
+                   help="Suffix appended to left y-axis tick labels.")
+    p.add_argument("--right_y_tick_suffix", default="",
+                   help="Suffix appended to right y-axis tick labels.")
 
     # ── Display options ───────────────────────────────────────────────────────
     p.add_argument("--show_values", action="store_true",
@@ -79,6 +87,54 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Use major_group/minor_group CSV columns for two-level x-axis labels.")
     p.add_argument("--panel_cols", type=int, default=1,
                    help="Number of columns for multi-panel ablation/decomp figures.")
+    p.add_argument("--pair_last_bars", action="store_true",
+                   help="Remove the gap between the last two bars in each decomp group.")
+    p.add_argument("--compact_decomp_legend", action="store_true",
+                   help="Use a compact path-hue and stage-lightness legend for decomp charts.")
+    p.add_argument("--compact_decomp_legend_rows", type=int, choices=(1, 2),
+                   default=1,
+                   help="Place compact decomp legend dimensions on one row or "
+                        "on separate rows.")
+    p.add_argument("--shared_panel_legend", action="store_true",
+                   help="For multi-panel decomp charts, keep the legend only "
+                        "above the first panel.")
+    p.add_argument("--decomp_bar_legend_title", default="Path",
+                   help="Heading for comparison bars in a compact decomp legend.")
+    p.add_argument("--decomp_segment_legend_title", default="Stage",
+                   help="Heading for stacked segments in a compact decomp legend.")
+    p.add_argument("--show_segment_delta", action="store_true",
+                   help="For two-segment decomp bars, draw an internal double-headed "
+                        "arrow spanning the upper segment and label its size.")
+    p.add_argument("--segment_delta_mode", choices=("percent", "value"),
+                   default="percent",
+                   help="Show the upper segment as a percentage of the total bar "
+                        "or as an absolute value.")
+    p.add_argument("--segment_delta_decimals", type=int, default=1,
+                   help="Decimal places used by internal segment-delta labels.")
+    p.add_argument("--segment_delta_font_size_pt", type=float, default=None,
+                   help="Font size for internal segment-delta labels. The renderer "
+                        "also caps it to fit within the physical bar width.")
+    p.add_argument("--show_cumulative_boundaries", action="store_true",
+                   help="Label every stacked-segment boundary with its segment "
+                        "name and cumulative value.")
+    p.add_argument("--cumulative_boundary_decimals", type=int, default=1,
+                   help="Decimal places used by cumulative boundary labels.")
+    p.add_argument("--cumulative_boundary_font_size_pt", type=float, default=None,
+                   help="Font size for cumulative boundary labels. The renderer "
+                        "also caps it to fit within the physical bar width.")
+    p.add_argument("--decomp_bar_only_legend", action="store_true",
+                   help="Show one legend entry per comparison bar and omit "
+                        "stacked-segment entries.")
+    p.add_argument("--decomp_right_bar", default="",
+                   help="Render the named decomp bar against a secondary right y-axis.")
+    p.add_argument("--decomp_right_y_label", default="",
+                   help="Right-axis label used with --decomp_right_bar.")
+    p.add_argument("--legend_note_first", action="store_true",
+                   help="Place the decomp legend-note row above the data-series legend rows.")
+    p.add_argument("--inline_legend_note", action="store_true",
+                   help="Append the decomp legend note to the final series label.")
+    p.add_argument("--parent_label_gap_pt", type=float, default=2.0,
+                   help="Gap in pt between minor and major labels on a two-level x-axis.")
     p.add_argument("--font_size_pt", type=float, default=7.0,
                    help="Tick-label and legend font size in pt (ACM minimum: 7).")
     p.add_argument("--label_font_size_pt", type=float, default=None,
@@ -116,9 +172,32 @@ def main(argv: list[str] | None = None) -> int:
         y_ticks=args.y_ticks,
         y_min=args.y_min,
         y_max=args.y_max,
+        right_y_min=args.right_y_min,
+        right_y_max=args.right_y_max,
+        y_tick_suffix=args.y_tick_suffix,
+        right_y_tick_suffix=args.right_y_tick_suffix,
         show_values=args.show_values,
         two_level_xaxis=args.two_level_xaxis,
         panel_cols=max(1, args.panel_cols),
+        pair_last_bars=args.pair_last_bars,
+        compact_decomp_legend=args.compact_decomp_legend,
+        compact_decomp_legend_rows=args.compact_decomp_legend_rows,
+        shared_panel_legend=args.shared_panel_legend,
+        decomp_bar_legend_title=args.decomp_bar_legend_title,
+        decomp_segment_legend_title=args.decomp_segment_legend_title,
+        show_segment_delta=args.show_segment_delta,
+        segment_delta_mode=args.segment_delta_mode,
+        segment_delta_decimals=max(0, args.segment_delta_decimals),
+        segment_delta_font_size_pt=args.segment_delta_font_size_pt,
+        show_cumulative_boundaries=args.show_cumulative_boundaries,
+        cumulative_boundary_decimals=max(0, args.cumulative_boundary_decimals),
+        cumulative_boundary_font_size_pt=args.cumulative_boundary_font_size_pt,
+        decomp_bar_only_legend=args.decomp_bar_only_legend,
+        decomp_right_bar=args.decomp_right_bar,
+        decomp_right_y_label=args.decomp_right_y_label,
+        legend_note_first=args.legend_note_first,
+        inline_legend_note=args.inline_legend_note,
+        parent_label_gap_pt=args.parent_label_gap_pt,
         palette_hue=args.palette_hue,
         custom_palette=args.palette,
     )

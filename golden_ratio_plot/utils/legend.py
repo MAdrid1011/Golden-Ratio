@@ -91,7 +91,7 @@ def stack_legend_rows(
     rows: List[Tuple[list, List[str]]],
     font_size: float,
 ) -> List:
-    """Draw legend rows stacked just above the axes at y=1.01.
+    """Draw legend rows stacked just above the axes.
 
     Rows are drawn bottom-to-top so that the final ``ax.legend()`` call
     (the topmost row) is the one ``tight_layout`` reserves space for.
@@ -114,7 +114,7 @@ def stack_legend_rows(
         leg = ax.legend(
             row_handles, row_labels,
             loc="lower right",
-            bbox_to_anchor=(1.0, 1.01),
+            bbox_to_anchor=(1.0, 1.002),
             ncol=len(row_labels),
             **kw,
         )
@@ -151,9 +151,9 @@ def finalize_legend_rows(
     row_step = leg_height_px / ax_height_px
 
     for row_idx, leg in enumerate(all_legs[:n_color_rows]):
-        y = 1.01 + row_idx * row_step
+        y = 1.002 + row_idx * row_step
         leg.set_bbox_to_anchor((1.0, y), transform=ax.transAxes)
 
     if len(all_legs) > n_color_rows:
-        y_map = 1.01 + n_color_rows * row_step
+        y_map = 1.002 + n_color_rows * row_step
         all_legs[n_color_rows].set_bbox_to_anchor((1.0, y_map), transform=ax.transAxes)
