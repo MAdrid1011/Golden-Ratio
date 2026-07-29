@@ -392,8 +392,19 @@ def _draw_panel(
         )
 
     # ── Axis labels ───────────────────────────────────────────────────────────
-    ax.set_ylabel(data.left_label, color=_LEFT_COLOR, fontsize=fs, labelpad=1)
-    ax2.set_ylabel(data.right_label, color=_RIGHT_COLOR, fontsize=fs, labelpad=1)
+    # Keep multi-panel rows visually identical to the Fig. 13 sensitivity
+    # layout: the left title appears only on the first column and the right
+    # title/tick labels only on the last column.  Repeating both axes on every
+    # panel wastes the narrow IEEE-column width and crowds the x tick labels.
+    if col_idx == 0:
+        ax.set_ylabel(data.left_label, color=_LEFT_COLOR, fontsize=fs, labelpad=1)
+    else:
+        ax.set_ylabel("")
+    if col_idx == n_cols - 1:
+        ax2.set_ylabel(data.right_label, color=_RIGHT_COLOR, fontsize=fs, labelpad=1)
+    else:
+        ax2.set_ylabel("")
+        ax2.tick_params(axis="y", labelright=False)
 
     # ── X-axis ticks and limits ───────────────────────────────────────────────
     ax.set_xticks(x_pos)
@@ -403,7 +414,14 @@ def _draw_panel(
             label if i % 2 == 0 or i == n_x - 1 else ""
             for i, label in enumerate(x_tick_labels)
         ]
-    ax.set_xticklabels(x_tick_labels, fontsize=fs)
+    # Five categorical ticks fit comfortably for integer labels in Fig. 13,
+    # but decimal labels such as 0.1--0.5 need a slightly smaller tick font in
+    # a three-panel IEEE column.  Keep all other typography unchanged.
+    longest_x_label = max((len(str(label)) for label in x_tick_labels), default=0)
+    x_tick_fs = fs
+    if n_cols > 1 and n_x >= 5:
+        x_tick_fs = max(5.0, fs - (1.0 if longest_x_label >= 3 else 0.5))
+    ax.set_xticklabels(x_tick_labels, fontsize=x_tick_fs)
     margin = 0.5 if n_x > 1 else 1.0
     ax.set_xlim(-margin, n_x - 1 + margin)
 
@@ -628,6 +646,42 @@ class SensitivityRenderer(BaseRenderer):
         gap_pt = 0.5
         fig.tight_layout(pad=0.2, w_pad=0.2, h_pad=gap_pt / cfg.font_size_pt)
         fig.canvas.draw()
+
+        # A one-row sensitivity figure uses the same shared group legend as
+        # the top row of Fig. 13.  The original renderer only created this
+        # legend for a 2x3 grid, leaving 1xN figures without a line-style key.
+        if n_rows == 1 and n_cols > 1 and len(datasets[0].groups) > 1:
+            first = datasets[0]
+            row_handles = [
+                Line2D(
+                    [0],
+                    [0],
+                    color=_LEGEND_COLOR,
+                    linestyle=_LINE_STYLES[i % len(_LINE_STYLES)],
+                    marker="none",
+                    linewidth=1.0,
+                    label=g or "Series",
+                )
+                for i, g in enumerate(first.groups)
+            ]
+            row_leg = fig.legend(
+                handles=row_handles,
+                loc="lower center",
+                bbox_to_anchor=(0.5, _row_top(axs, n_cols, 0)),
+                ncol=len(row_handles),
+                frameon=False,
+                handlelength=1.35,
+                handletextpad=0.35,
+                columnspacing=0.75,
+            )
+            fig_h_pt = fig.get_figheight() * PT_PER_INCH
+            _anchor_row_legend(
+                fig,
+                row_leg,
+                _row_top(axs, n_cols, 0),
+                gap_pt / fig_h_pt,
+            )
+            fig.canvas.draw()
 
         if n_rows > 1 and n_cols == 3:
             first = datasets[0]
