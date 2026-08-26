@@ -133,13 +133,21 @@ class BaseRenderer(ABC):
         # this pad the outer half of the right spine (which has no outward ticks to
         # extend the bbox) is outside the saved boundary and appears as 0.5 pt.
         from golden_ratio_plot.config import PT_PER_INCH
-        pad = cfg.spine_linewidth_pt / 2.0 / PT_PER_INCH
+        pad_pt = (
+            cfg.spine_linewidth_pt / 2.0
+            if cfg.tight_pad_pt is None
+            else max(0.0, cfg.tight_pad_pt)
+        )
+        pad = pad_pt / PT_PER_INCH
 
         saved: list[str] = []
         for fmt in cfg.formats:
             out = base.with_suffix(f".{fmt.lower()}")
-            fig.savefig(str(out), format=fmt.lower(),
-                        bbox_inches="tight", pad_inches=pad)
+            if cfg.preserve_canvas:
+                fig.savefig(str(out), format=fmt.lower())
+            else:
+                fig.savefig(str(out), format=fmt.lower(),
+                            bbox_inches="tight", pad_inches=pad)
             saved.append(str(out))
         # Store the list for the caller to print.
         self._saved_paths = saved

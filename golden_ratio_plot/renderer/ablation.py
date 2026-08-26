@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
+from matplotlib.transforms import offset_copy
 from golden_ratio_plot.config import PHI, PlotConfig
 from golden_ratio_plot.reader import AblationData, read_csv
 from golden_ratio_plot.renderer.base import BaseRenderer
@@ -49,6 +50,7 @@ _STRICT_TOLERANCE = 0.5
 
 # Fixed headroom above the tallest bar (or tallest value label) in pt.
 _TOP_PAD_PT = 5.0
+_PARENT_BOUNDARY_PAD_PT = 1.0
 
 
 class AblationRenderer(BaseRenderer):
@@ -158,7 +160,10 @@ class AblationRenderer(BaseRenderer):
     def _draw(self, fig: Figure, ax: Axes, data: AblationData) -> None:
         """Single-panel draw (called by :meth:`BaseRenderer.render`)."""
         state = self._draw_content(fig, ax, data)
-        fig.tight_layout()
+        if self.config.layout_pad is None:
+            fig.tight_layout()
+        else:
+            fig.tight_layout(pad=max(0.0, self.config.layout_pad))
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
         self._draw_finalize(fig, ax, state, renderer)
@@ -253,12 +258,20 @@ class AblationRenderer(BaseRenderer):
 
         # Horizontal value labels need only a small clearance above the bar.
         _top_pad = 0.3 if cfg.show_values else 0.618
-        axis_min, axis_max_prov, ticks = nice_range(
-            data_min,
-            data_max,
-            n=cfg.y_ticks,
-            top_padding_intervals=_top_pad,
-        )
+        if cfg.exact_y_ticks and cfg.y_min is not None and cfg.y_max is not None:
+            tick_count = max(2, cfg.y_ticks)
+            axis_min, axis_max_prov = data_min, data_max
+            ticks = [
+                data_min + i * (data_max - data_min) / (tick_count - 1)
+                for i in range(tick_count)
+            ]
+        else:
+            axis_min, axis_max_prov, ticks = nice_range(
+                data_min,
+                data_max,
+                n=cfg.y_ticks,
+                top_padding_intervals=_top_pad,
+            )
         ax.set_ylim(axis_min, axis_max_prov)
         ax.set_yticks(ticks)
 
@@ -380,6 +393,12 @@ class AblationRenderer(BaseRenderer):
             )
 
         if cfg.two_level_xaxis and data.major_group:
+            parent_y, parent_boundary_bottom = _two_level_xaxis_label_layout(
+                fig,
+                ax,
+                xlbl_fontsize,
+                gap_pt=cfg.parent_label_gap_pt,
+            )
             _draw_two_level_xaxis_boundaries(
                 ax,
                 data.groups,
@@ -388,10 +407,11 @@ class AblationRenderer(BaseRenderer):
                 x_min=0.0,
                 x_max=data.n_groups * cell_width,
                 linewidth=cfg.spine_linewidth_pt,
+                bottom=parent_boundary_bottom,
             )
             _draw_parent_xlabels(
                 ax, data.groups, group_centers, data.major_group,
-                fontsize=xlbl_fontsize, y=-0.14
+                fontsize=xlbl_fontsize, y=parent_y
             )
 
         # ── Axis labels ───────────────────────────────────────────────────────
@@ -400,11 +420,34 @@ class AblationRenderer(BaseRenderer):
 
         # ── Subfigure caption (below x-axis tick labels) ──────────────────────
         if data.caption:
-            ax.set_xlabel(
-                data.caption,
-                fontsize=xlbl_fontsize + 1,
-                labelpad=10.0 if cfg.two_level_xaxis else 0.5,
-            )
+            if cfg.two_level_xaxis and data.major_group:
+                # Anchor the caption to the parent-label row with a physical
+                # point offset.  An x-axis label makes tight_layout exchange
+                # label padding for axes height because the parent labels are
+                # custom artists, producing an unnecessarily large gap.
+                caption_transform = offset_copy(
+                    ax.transAxes,
+                    fig=fig,
+                    x=0.0,
+                    y=-(xlbl_fontsize + cfg.panel_caption_pad_pt),
+                    units="points",
+                )
+                ax.text(
+                    0.5,
+                    parent_y,
+                    data.caption,
+                    transform=caption_transform,
+                    ha="center",
+                    va="top",
+                    fontsize=xlbl_fontsize + 1,
+                    clip_on=False,
+                )
+            else:
+                ax.set_xlabel(
+                    data.caption,
+                    fontsize=xlbl_fontsize + 1,
+                    labelpad=0.5,
+                )
 
         # ── Legend — phase 1: create rows at initial y=1.01 ──────────────────
         color_labels = list(data.labels)
@@ -594,6 +637,57 @@ def _draw_parent_xlabels(
                 current = parent_map.get(groups[i], groups[i])
 
 
+def _two_level_xaxis_label_layout(
+    fig: Figure,
+    ax: Axes,
+    fontsize: float,
+    *,
+    gap_pt: float = 2.0,
+) -> Tuple[float, float]:
+    """Place the parent-label row at a fixed physical gap below child labels."""
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    axes_bbox = ax.get_window_extent(renderer)
+    tick_labels = [
+        label for label in ax.get_xticklabels()
+        if label.get_text().strip()
+    ]
+    if axes_bbox.height <= 0 or not tick_labels:
+        line_h_axes = _points_to_axes_y(fig, ax, fontsize * 1.25)
+        gap_axes = _points_to_axes_y(fig, ax, gap_pt)
+        parent_y = -line_h_axes - gap_axes
+        return parent_y, parent_y - line_h_axes
+
+    child_bottom_px = min(
+        label.get_window_extent(renderer).y0
+        for label in tick_labels
+    )
+    parent_top_px = child_bottom_px - _points_to_pixels(fig, gap_pt)
+    parent_y = ax.transAxes.inverted().transform(
+        (axes_bbox.x0, parent_top_px)
+    )[1]
+    parent_bottom_px = parent_top_px - _points_to_pixels(
+        fig,
+        fontsize * 1.15 + _PARENT_BOUNDARY_PAD_PT,
+    )
+    parent_bottom_y = ax.transAxes.inverted().transform(
+        (axes_bbox.x0, parent_bottom_px)
+    )[1]
+    return parent_y, parent_bottom_y
+
+
+def _points_to_pixels(fig: Figure, points: float) -> float:
+    return points * fig.dpi / 72.0
+
+
+def _points_to_axes_y(fig: Figure, ax: Axes, points: float) -> float:
+    renderer = fig.canvas.get_renderer()
+    axes_bbox = ax.get_window_extent(renderer)
+    if axes_bbox.height <= 0:
+        return 0.0
+    return _points_to_pixels(fig, points) / axes_bbox.height
+
+
 def _parent_separator_xs(
     groups: List[str],
     separator_xs: List[float],
@@ -618,11 +712,10 @@ def _draw_two_level_xaxis_boundaries(
     x_min: float,
     x_max: float,
     linewidth: float,
+    bottom: float = -0.205,
 ) -> None:
     """Extend separators into the two-level x-axis label area."""
     trans = ax.get_xaxis_transform()
-    parent_bottom = -0.205
-
     parent_boundaries = [x_min, x_max]
     for i, sx in enumerate(separator_xs):
         left_parent = parent_map.get(groups[i], groups[i])
@@ -633,7 +726,7 @@ def _draw_two_level_xaxis_boundaries(
     for sx in parent_boundaries:
         ax.plot(
             [sx, sx],
-            [0.0, parent_bottom],
+            [0.0, bottom],
             transform=trans,
             color="black",
             linewidth=linewidth,

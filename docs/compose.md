@@ -29,7 +29,7 @@ The JSON file is the only input passed to `--input`. CSV paths inside the JSON a
 | `layout.rows`, `layout.cols` | Grid shape for the figure. |
 | `panels` | List of panel specifications. |
 | `row`, `col` | Zero-based panel position in the grid. |
-| `type` | One of `bar`, `decomp_ratio`, or `timeline`. |
+| `type` | One of `bar`, `line`, `image`, `heatmap_pair`, `decomp_ratio`, or `timeline`. |
 | `csv` | Panel data file, relative to the JSON file. |
 
 Use the usual global CLI options for figure width, font size, y-axis defaults, palette, and output formats.
@@ -75,9 +75,67 @@ LLaMA2,SVIP,46,36
 
 For stacked bars, set `"bar_mode": "stacked"` and list `segments` instead of `series`. A `right_axis_line` object can overlay a dashed line on a secondary y-axis.
 
+Set `"values": {"show": true}` to label grouped or stacked bars. Stacked bars may use `"label_column"` to read a complete custom label, including a line break, from the panel CSV.
+
 Legends are placed above the axes by default. For compact panels, set
 `"legend": { "placement": "inside_upper_right", "ncol": 1 }` to place a
 top-to-bottom legend inside the upper-right corner of the plotting area.
+
+---
+
+## Line Panel
+
+A `line` panel reads an ordered numeric x column and one or more numeric series. It also supports horizontal reference lines, direct annotations, and a highlighted point.
+
+```json
+{
+  "type": "line",
+  "csv": "query_trace.csv",
+  "x": { "column": "query_id", "label": "Query ID", "min": 0, "max": 63 },
+  "series": [
+    { "label": "Workload", "column": "normalized_workload", "color": "#607D8B" }
+  ],
+  "horizontal_lines": [
+    { "y": 1.0, "label": "Mean", "linestyle": "--" }
+  ],
+  "caption": "(a) Query workload distribution"
+}
+```
+
+---
+
+## Image Panel
+
+An `image` panel accepts a raster image or a two-dimensional NumPy array. It can draw one data-space rectangle for a selected spatial region.
+
+```json
+{
+  "type": "image",
+  "image": "slice.npy",
+  "display": { "cmap": "gray", "origin": "lower" },
+  "rectangle": { "x": 40, "y": 50, "width": 32, "height": 32 },
+  "caption": "(b) Selected region"
+}
+```
+
+---
+
+## Paired Heatmap Panel
+
+`heatmap_pair` places two raster images or NumPy arrays side by side with one shared color scale. Use it for before-and-after spatial error maps.
+
+```json
+{
+  "type": "heatmap_pair",
+  "arrays": ["error_before.npy", "error_after.npy"],
+  "labels": ["Before", "After"],
+  "cmap": "magma",
+  "vmin": 0,
+  "vmax": 45,
+  "colorbar": { "label": "Error (%)", "ticks": [0, 20, 40] },
+  "caption": "(c) Spatial error maps"
+}
+```
 For stacked bars, `"x": { "tick_pad": 2 }` can be used to increase the
 distance between the x-axis tick labels and the axis line.
 

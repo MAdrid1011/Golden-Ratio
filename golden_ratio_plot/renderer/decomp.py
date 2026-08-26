@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.transforms import offset_copy
 
 from golden_ratio_plot.config import PHI, PlotConfig
 from golden_ratio_plot.reader import DecompData
@@ -133,6 +134,7 @@ def _decomp_legend_rows(
     font_size: float,
     compact: bool = False,
     compact_rows: int = 1,
+    segment_legend_first: bool = False,
     bar_legend_title: str = "Path",
     segment_legend_title: str = "Stage",
     legend_note_first: bool = False,
@@ -216,10 +218,13 @@ def _decomp_legend_rows(
                 if legend_note_first:
                     rows.append(note_row)
             if compact_rows == 2:
-                rows.extend([
+                legend_rows = [
                     (bar_handles, bar_labels),
                     (segment_handles, segment_labels),
-                ])
+                ]
+                if segment_legend_first:
+                    legend_rows.reverse()
+                rows.extend(legend_rows)
             else:
                 rows.append((
                     bar_handles + segment_handles,
@@ -368,13 +373,44 @@ class DecompRenderer(BaseRenderer):
                 for leg in getattr(ax, "_golden_ratio_legend_rows", []):
                     leg.remove()
                 setattr(ax, "_golden_ratio_legend_rows", [])
-        h_pad = 0.9 if ncols > 1 else 1.0 / cfg.font_size_pt
+        elif (
+            cfg.shared_segment_legend
+            and cfg.compact_decomp_legend
+            and cfg.compact_decomp_legend_rows == 2
+        ):
+            for ax in axes[1:]:
+                legs = list(getattr(ax, "_golden_ratio_legend_rows", []))
+                if len(legs) < 2:
+                    continue
+                segment_idx = -1 if cfg.decomp_segment_legend_first else 0
+                legs[segment_idx].remove()
+                del legs[segment_idx]
+                setattr(ax, "_golden_ratio_legend_rows", legs)
+        h_pad = (
+            0.9
+            if ncols > 1 or cfg.shared_segment_legend
+            else 1.0 / cfg.font_size_pt
+        )
         fig.tight_layout(h_pad=h_pad, pad=0.3)
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
         for ax in axes:
             legs = getattr(ax, "_golden_ratio_legend_rows", [])
             _finalize_legend_rows(ax, legs, len(legs), renderer)
+        # Legend rows move after the first layout pass.  Re-measure the final
+        # legend and caption extents so adjacent panels cannot overlap.
+        fig.tight_layout(h_pad=h_pad, pad=0.3)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        for ax in axes:
+            legs = getattr(ax, "_golden_ratio_legend_rows", [])
+            _finalize_legend_rows(ax, legs, len(legs), renderer)
+        for idx, offset_pt in enumerate(cfg.panel_y_offsets_pt[:len(axes)]):
+            if offset_pt == 0.0:
+                continue
+            pos = axes[idx].get_position()
+            dy = offset_pt / (72.0 * fig.get_size_inches()[1])
+            axes[idx].set_position([pos.x0, pos.y0 + dy, pos.width, pos.height])
         self._save(fig)
         plt.close(fig)
 
@@ -411,11 +447,14 @@ class DecompRenderer(BaseRenderer):
             for b_idx, b in enumerate(data.bars):
                 centers[(g, b)] = x
                 if b_idx < n_bars - 1:
-                    pair_gap = (
-                        0.0
-                        if cfg.pair_last_bars and b_idx == n_bars - 2
-                        else intra
-                    )
+                    if cfg.pair_bar_groups:
+                        pair_gap = bar_w * (0.24 if b_idx % 2 == 0 else 0.88)
+                    else:
+                        pair_gap = (
+                            0.0
+                            if cfg.pair_last_bars and b_idx == n_bars - 2
+                            else intra
+                        )
                     x += bar_w + pair_gap
                 elif g_idx < n_groups - 1:
                     x += bar_w + inter
@@ -446,8 +485,13 @@ class DecompRenderer(BaseRenderer):
 
         # ── Draw stacked bars ───────────────────────────────────────────────
         y_max_data = 0.0
-        right_bar = cfg.decomp_right_bar
-        ax2 = ax.twinx() if right_bar and right_bar in data.bars else None
+        requested_right_bars = {
+            name.strip()
+            for name in cfg.decomp_right_bar.split(",")
+            if name.strip()
+        }
+        right_bars = [bar for bar in data.bars if bar in requested_right_bars]
+        ax2 = ax.twinx() if right_bars else None
         right_y_max_data = 0.0
         custom_colors = palette_from_config(n_bars, cfg.custom_palette, cfg.palette_hue)
         use_custom_palette = bool(cfg.custom_palette)
@@ -463,7 +507,7 @@ class DecompRenderer(BaseRenderer):
             for g in data.groups:
                 cx     = centers[(g, bar)]
                 bottom = 0.0
-                target_ax = ax2 if ax2 is not None and bar == right_bar else ax
+                target_ax = ax2 if ax2 is not None and bar in right_bars else ax
                 for s_idx, seg in enumerate(segs):
                     val = data.values.get((g, bar, seg), 0.0)
                     target_ax.bar(
@@ -603,7 +647,7 @@ class DecompRenderer(BaseRenderer):
                 )
             )
             ax2.set_ylabel(
-                cfg.decomp_right_y_label or right_bar,
+                cfg.decomp_right_y_label or " / ".join(right_bars),
                 fontsize=fs,
                 labelpad=2,
             )
@@ -686,6 +730,7 @@ class DecompRenderer(BaseRenderer):
             data, custom_colors, use_custom_palette, legend_width_pt, xlbl_fs,
             compact=cfg.compact_decomp_legend,
             compact_rows=cfg.compact_decomp_legend_rows,
+            segment_legend_first=cfg.decomp_segment_legend_first,
             bar_legend_title=cfg.decomp_bar_legend_title,
             segment_legend_title=cfg.decomp_segment_legend_title,
             legend_note_first=cfg.legend_note_first,
@@ -697,14 +742,32 @@ class DecompRenderer(BaseRenderer):
 
         # ── Caption ─────────────────────────────────────────────────────────
         if data.caption:
-            ax.set_xlabel(
-                data.caption,
-                fontsize=fs + 1,
-                labelpad=10 if cfg.two_level_xaxis else 2,
-                color="black",
-            )
-            if cfg.two_level_xaxis and panel_cols > 1:
-                ax.xaxis.set_label_coords(0.5, -0.240)
+            if cfg.two_level_xaxis and data.major_group:
+                caption_transform = offset_copy(
+                    ax.transAxes,
+                    fig=fig,
+                    x=0.0,
+                    y=-(xlbl_fs + cfg.panel_caption_pad_pt),
+                    units="points",
+                )
+                ax.text(
+                    0.5,
+                    parent_label_y,
+                    data.caption,
+                    transform=caption_transform,
+                    ha="center",
+                    va="top",
+                    fontsize=xlbl_fs + 1,
+                    color="black",
+                    clip_on=False,
+                )
+            else:
+                ax.set_xlabel(
+                    data.caption,
+                    fontsize=xlbl_fs + 1,
+                    labelpad=2,
+                    color="black",
+                )
 
         # ── Finalise layout and legend row positions ─────────────────────────
         if finalize:

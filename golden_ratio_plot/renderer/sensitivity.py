@@ -76,7 +76,7 @@ _Y_PAD = 0.0
 
 # ── Grid layout ───────────────────────────────────────────────────────────────
 
-def _determine_grid(n: int) -> Tuple[int, int]:
+def _determine_grid(n: int, preferred_cols: int = 0) -> Tuple[int, int]:
     """Return (n_cols, n_rows) for *n* sensitivity panels.
 
     Raises
@@ -86,6 +86,13 @@ def _determine_grid(n: int) -> Tuple[int, int]:
     """
     if n <= 0:
         raise ValueError("Need at least one panel.")
+    if preferred_cols > 1:
+        if n % preferred_cols != 0:
+            raise ValueError(
+                f"{n} panels cannot be evenly arranged into "
+                f"{preferred_cols} columns."
+            )
+        return preferred_cols, n // preferred_cols
     if n <= 4:
         return n, 1
     if n % 3 == 0:
@@ -404,7 +411,12 @@ def _draw_panel(
         ax2.set_ylabel(data.right_label, color=_RIGHT_COLOR, fontsize=fs, labelpad=1)
     else:
         ax2.set_ylabel("")
-        ax2.tick_params(axis="y", labelright=False)
+        # Two-column sensitivity grids can have materially different right-axis
+        # ranges in adjacent panels.  Keep their numeric ticks visible so every
+        # absolute curve remains readable; denser three-column layouts retain
+        # the compact SCARF convention of a right scale only at the row edge.
+        if n_cols >= 3:
+            ax2.tick_params(axis="y", labelright=False)
 
     # ── X-axis ticks and limits ───────────────────────────────────────────────
     ax.set_xticks(x_pos)
@@ -545,7 +557,17 @@ def _draw_panel(
                     )
 
     # ── Caption (below x-axis) ────────────────────────────────────────────────
-    if data.caption:
+    if data.x_label and data.caption:
+        ax.set_xlabel(
+            f"{data.x_label}\n{data.caption}",
+            fontsize=fs,
+            labelpad=1,
+            color="black",
+            linespacing=1.05,
+        )
+    elif data.x_label:
+        ax.set_xlabel(data.x_label, fontsize=fs, labelpad=1, color="black")
+    elif data.caption:
         ax.set_xlabel(data.caption, fontsize=fs + 1, labelpad=1, color="black")
 
     return ax2
@@ -624,7 +646,10 @@ class SensitivityRenderer(BaseRenderer):
         self._apply_rcparams()
 
         n = len(datasets)
-        n_cols, n_rows = _determine_grid(n)
+        n_cols, n_rows = _determine_grid(
+            n,
+            preferred_cols=cfg.panel_cols if cfg.panel_cols > 1 else 0,
+        )
 
         # Each CELL (full subplot area) has aspect ratio φ:1.
         cell_w_pt = cfg.width_pt / n_cols
@@ -644,7 +669,8 @@ class SensitivityRenderer(BaseRenderer):
         # Match the ablation renderer: use a physical 1-pt target gap for the
         # initial layout, then measure and pack the rows precisely below.
         gap_pt = 0.5
-        fig.tight_layout(pad=0.2, w_pad=0.2, h_pad=gap_pt / cfg.font_size_pt)
+        w_pad = 1.0 if n_cols == 2 else 0.2
+        fig.tight_layout(pad=0.2, w_pad=w_pad, h_pad=gap_pt / cfg.font_size_pt)
         fig.canvas.draw()
 
         # A one-row sensitivity figure uses the same shared group legend as
@@ -670,6 +696,8 @@ class SensitivityRenderer(BaseRenderer):
                 bbox_to_anchor=(0.5, _row_top(axs, n_cols, 0)),
                 ncol=len(row_handles),
                 frameon=False,
+                borderpad=0.0,
+                borderaxespad=0.0,
                 handlelength=1.35,
                 handletextpad=0.35,
                 columnspacing=0.75,
@@ -678,6 +706,41 @@ class SensitivityRenderer(BaseRenderer):
             _anchor_row_legend(
                 fig,
                 row_leg,
+                _row_top(axs, n_cols, 0),
+                gap_pt / fig_h_pt,
+            )
+            fig.canvas.draw()
+
+        if n_rows > 1 and n_cols == 2 and len(datasets[0].groups) > 1:
+            first = datasets[0]
+            shared_handles = [
+                Line2D(
+                    [0],
+                    [0],
+                    color=_LEGEND_COLOR,
+                    linestyle=_LINE_STYLES[i % len(_LINE_STYLES)],
+                    marker="none",
+                    linewidth=1.0,
+                    label=g or "Series",
+                )
+                for i, g in enumerate(first.groups)
+            ]
+            shared_leg = fig.legend(
+                handles=shared_handles,
+                loc="lower center",
+                bbox_to_anchor=(0.5, _row_top(axs, n_cols, 0)),
+                ncol=len(shared_handles),
+                frameon=False,
+                borderpad=0.0,
+                borderaxespad=0.0,
+                handlelength=1.35,
+                handletextpad=0.35,
+                columnspacing=0.75,
+            )
+            fig_h_pt = fig.get_figheight() * PT_PER_INCH
+            _anchor_row_legend(
+                fig,
+                shared_leg,
                 _row_top(axs, n_cols, 0),
                 gap_pt / fig_h_pt,
             )
@@ -703,6 +766,8 @@ class SensitivityRenderer(BaseRenderer):
                 bbox_to_anchor=(0.5, _row_top(axs, n_cols, 0)),
                 ncol=len(top_handles),
                 frameon=False,
+                borderpad=0.0,
+                borderaxespad=0.0,
                 handlelength=1.35,
                 handletextpad=0.35,
                 columnspacing=0.75,
@@ -744,6 +809,8 @@ class SensitivityRenderer(BaseRenderer):
                     bbox_to_anchor=(0.5, _row_top(axs, n_cols, 1)),
                     ncol=len(bottom_handles),
                     frameon=False,
+                    borderpad=0.0,
+                    borderaxespad=0.0,
                     handlelength=1.0,
                     handletextpad=0.35,
                     columnspacing=0.65,

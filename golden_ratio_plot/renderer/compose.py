@@ -8,10 +8,12 @@ from typing import Any, Dict, Iterable, List, Tuple
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
+import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec, SubplotSpec
 from matplotlib.lines import Line2D
+from matplotlib.transforms import offset_copy
 
 from golden_ratio_plot.config import PT_PER_INCH, PlotConfig
 from golden_ratio_plot.renderer.base import BaseRenderer
@@ -70,6 +72,7 @@ class ComposeRenderer(BaseRenderer):
             hspace=float(layout.get("hspace", default_hspace)),
             wspace=float(layout.get("wspace", 0.25)),
             height_ratios=layout.get("height_ratios"),
+            width_ratios=layout.get("width_ratios"),
         )
         base_dir = path.parent
         panel_axes: Dict[Tuple[int, int], List[Axes]] = {}
@@ -82,6 +85,14 @@ class ComposeRenderer(BaseRenderer):
             if ptype == "timeline":
                 self._draw_timeline_panel(fig, cell, panel, base_dir)
                 continue
+            if ptype == "heatmap_pair":
+                axes = self._draw_heatmap_pair_panel(fig, cell, panel, base_dir)
+                panel_axes.setdefault((row, col), []).extend(axes)
+                continue
+            if ptype == "heatmap_overlay":
+                axes = self._draw_heatmap_overlay_panel(fig, cell, panel, base_dir)
+                panel_axes.setdefault((row, col), []).extend(axes)
+                continue
 
             ax = fig.add_subplot(cell)
             panel_axes.setdefault((row, col), []).append(ax)
@@ -89,6 +100,10 @@ class ComposeRenderer(BaseRenderer):
             self._configure_ticks(ax)
             if ptype == "bar":
                 self._draw_bar_panel(fig, ax, panel, base_dir)
+            elif ptype == "line":
+                self._draw_line_panel(fig, ax, panel, base_dir)
+            elif ptype == "image":
+                self._draw_image_panel(fig, ax, panel, base_dir)
             elif ptype == "decomp_ratio":
                 self._draw_decomp_ratio_panel(fig, ax, panel, base_dir)
             else:
@@ -153,8 +168,83 @@ class ComposeRenderer(BaseRenderer):
                 cols,
                 gap_pt=float(pack.get("gap_pt", 2.0)),
             )
+        self._adjust_panel_axes(panel_axes, panels)
         self._save(fig)
         plt.close(fig)
+
+    @staticmethod
+    def _adjust_panel_axes(
+        panel_axes: Dict[Tuple[int, int], List[Axes]],
+        panels: List[Dict[str, Any]],
+    ) -> None:
+        """Apply optional per-panel scale and translation after GridSpec layout."""
+
+        for panel in panels:
+            adjust = panel.get("axes_adjust", {})
+            if not adjust:
+                continue
+            key = (int(panel.get("row", 0)), int(panel.get("col", 0)))
+            axes = panel_axes.get(key, [])
+            scale_x = float(adjust.get("scale_x", adjust.get("scale", 1.0)))
+            scale_y = float(adjust.get("scale_y", adjust.get("scale", 1.0)))
+            shift_x = float(adjust.get("shift_x", 0.0))
+            shift_y = float(adjust.get("shift_y", 0.0))
+            anchor_x = float(adjust.get("anchor_x", 0.5))
+            anchor_y = float(adjust.get("anchor_y", 0.5))
+            if adjust.get("group", False) and axes:
+                positions = [ax.get_position() for ax in axes]
+                group_x0 = min(position.x0 for position in positions)
+                group_y0 = min(position.y0 for position in positions)
+                group_x1 = max(position.x1 for position in positions)
+                group_y1 = max(position.y1 for position in positions)
+                group_width = group_x1 - group_x0
+                group_height = group_y1 - group_y0
+                scaled_x0 = (
+                    group_x0
+                    - group_width * (scale_x - 1.0) * anchor_x
+                    + shift_x
+                )
+                scaled_y0 = (
+                    group_y0
+                    - group_height * (scale_y - 1.0) * anchor_y
+                    + shift_y
+                )
+                for ax, position in zip(axes, positions):
+                    ax.set_position(
+                        [
+                            scaled_x0 + (position.x0 - group_x0) * scale_x,
+                            scaled_y0 + (position.y0 - group_y0) * scale_y,
+                            position.width * scale_x,
+                            position.height * scale_y,
+                        ]
+                    )
+                if adjust.get("fit_outer_to_children", False) and len(axes) > 1:
+                    child_positions = [ax.get_position() for ax in axes[1:]]
+                    child_x0 = min(position.x0 for position in child_positions)
+                    child_y0 = min(position.y0 for position in child_positions)
+                    child_x1 = max(position.x1 for position in child_positions)
+                    child_y1 = max(position.y1 for position in child_positions)
+                    axes[0].set_position(
+                        [
+                            child_x0,
+                            child_y0,
+                            child_x1 - child_x0,
+                            child_y1 - child_y0,
+                        ]
+                    )
+                continue
+            for ax in axes:
+                position = ax.get_position()
+                width = position.width * scale_x
+                height = position.height * scale_y
+                ax.set_position(
+                    [
+                        position.x0 - (width - position.width) * anchor_x + shift_x,
+                        position.y0 - (height - position.height) * anchor_y + shift_y,
+                        width,
+                        height,
+                    ]
+                )
 
     @staticmethod
     def _pack_vertical_panels(
@@ -168,8 +258,9 @@ class ComposeRenderer(BaseRenderer):
         """Pack vertical compose panels using a fixed gap in points.
 
         Matplotlib's GridSpec hspace is relative to axes height, so the visual
-        gap changes when the figure height changes. This pass measures each
-        upper panel's full text extent and moves the next row directly below it.
+        gap changes when the figure height changes. This pass measures both
+        panels' full text extents and moves the next row directly below the
+        preceding caption without colliding with its legend.
         """
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
@@ -195,7 +286,7 @@ class ComposeRenderer(BaseRenderer):
                     if ax.get_visible()
                 )
                 cur_top = max(
-                    ax.get_position().y1
+                    inv.transform_bbox(ax.get_tightbbox(renderer)).y1
                     for ax in cur_axes
                     if ax.get_visible()
                 )
@@ -285,23 +376,34 @@ class ComposeRenderer(BaseRenderer):
         x_max = max(last_edge + outer_gap, 1.0)
         ax.set_xlim(x_min, x_max)
 
+        value_positions: List[Tuple[float, float]] = []
         for p in parents:
             for child in children_by_parent[p]:
                 row = row_map[(p, child)]
                 for s_idx, item in enumerate(series):
                     label = item["label"]
                     cx = centers[(p, child, label)]
+                    value = _as_float(row, item["column"])
                     ax.bar(
                         cx,
-                        _as_float(row, item["column"]),
+                        value,
                         width=bar_w,
                         color=_hex(colors[s_idx] if s_idx < len(colors) else ""),
                         edgecolor="black",
                         linewidth=0.45,
                         zorder=2,
                     )
+                    value_positions.append((cx, value))
 
         self._apply_y_axis(ax, panel.get("y", {}))
+        value_spec = panel.get("values", {})
+        label_column = value_spec.get("label_column", "")
+        value_labels = (
+            [row.get(label_column, "") for row in data]
+            if label_column
+            else None
+        )
+        self._draw_value_labels(ax, value_positions, value_spec, value_labels)
         ax.yaxis.grid(True, linestyle="--", linewidth=0.45, color="#D0D0D0", zorder=0)
         ax.set_xticks(child_centers)
         two = panel.get("two_level_xaxis", {})
@@ -312,6 +414,7 @@ class ComposeRenderer(BaseRenderer):
             fontsize=cfg.font_size_pt,
         )
         ax.tick_params(axis="x", which="both", length=0, pad=1.0)
+        parent_bottom = None
         if two:
             parent_bottom = _draw_compose_parent_xlabels(
                 fig, ax, parent_centers, parent_labels,
@@ -341,7 +444,7 @@ class ComposeRenderer(BaseRenderer):
         ]
         labels = [item["label"] for item in series]
         self._draw_panel_legend(ax, handles, labels, panel.get("legend", {}))
-        self._caption(ax, panel)
+        self._caption(ax, panel, parent_bottom=parent_bottom)
 
     def _draw_stacked_bar(
         self,
@@ -364,6 +467,7 @@ class ComposeRenderer(BaseRenderer):
         colors = panel.get("colors", [])
         bar_w = float(panel.get("bar_layout", {}).get("bar_width", 0.76))
         xs = list(range(len(data)))
+        value_positions: List[Tuple[float, float]] = []
         for x, row in zip(xs, data):
             bottom = 0.0
             for s_idx, item in draw_segments:
@@ -374,8 +478,17 @@ class ComposeRenderer(BaseRenderer):
                     edgecolor="black", linewidth=0.4, zorder=2,
                 )
                 bottom += val
+            value_positions.append((float(x), bottom))
 
         self._apply_y_axis(ax, panel.get("y", {}))
+        value_spec = panel.get("values", {})
+        label_column = value_spec.get("label_column", "")
+        value_labels = (
+            [row.get(label_column, "") for row in data]
+            if label_column
+            else None
+        )
+        self._draw_value_labels(ax, value_positions, value_spec, value_labels)
         ax.yaxis.grid(True, linestyle="--", linewidth=0.45, color="#D0D0D0", zorder=0)
         show_every = panel.get("x", {}).get("show_every", "")
         tick_labels = []
@@ -386,7 +499,10 @@ class ComposeRenderer(BaseRenderer):
             else:
                 tick_labels.append(label)
         ax.set_xticks(xs)
-        ax.set_xticklabels(tick_labels, fontsize=cfg.font_size_pt)
+        ax.set_xticklabels(
+            tick_labels,
+            fontsize=float(xspec.get("font_size_pt", cfg.font_size_pt)),
+        )
         ax.tick_params(
             axis="x",
             length=0,
@@ -458,6 +574,551 @@ class ComposeRenderer(BaseRenderer):
 
         self._draw_panel_legend(ax, handles, labels, panel.get("legend", {}))
         self._caption(ax, panel)
+
+    # ── Generic line panel ────────────────────────────────────────────────
+
+    def _draw_line_panel(
+        self,
+        fig: Figure,
+        ax: Axes,
+        panel: Dict[str, Any],
+        base_dir: Path,
+    ) -> None:
+        data = _rows(base_dir / panel["csv"])
+        xspec = panel.get("x", {})
+        xcol = xspec.get("column", "x")
+        xs = [_as_float(row, xcol) for row in data]
+        series = panel.get("series", [])
+        colors = panel.get("colors", [])
+        handles: List[Any] = []
+        labels: List[str] = []
+
+        for index, item in enumerate(series):
+            color = item.get(
+                "color",
+                colors[index] if index < len(colors) else "#4C8DB9",
+            )
+            ys = [_as_float(row, item["column"]) for row in data]
+            line, = ax.plot(
+                xs,
+                ys,
+                color=_hex(color),
+                linewidth=float(item.get("linewidth", 0.9)),
+                linestyle=item.get("linestyle", "-"),
+                marker=item.get("marker", ""),
+                markersize=float(item.get("markersize", 2.4)),
+                markerfacecolor=item.get("markerfacecolor", _hex(color)),
+                markeredgecolor=item.get("markeredgecolor", _hex(color)),
+                zorder=3,
+            )
+            handles.append(line)
+            labels.append(item["label"])
+
+        for reference in panel.get("horizontal_lines", []):
+            y_value = float(reference["y"])
+            color = reference.get("color", "#666666")
+            ax.axhline(
+                y_value,
+                color=color,
+                linewidth=float(reference.get("linewidth", 0.7)),
+                linestyle=reference.get("linestyle", "--"),
+                zorder=2,
+            )
+            label = reference.get("label", "")
+            if label:
+                ax.text(
+                    float(reference.get("label_x", 0.98)),
+                    y_value,
+                    label,
+                    transform=ax.get_yaxis_transform(),
+                    ha=reference.get("ha", "right"),
+                    va=reference.get("va", "bottom"),
+                    fontsize=float(
+                        reference.get("font_size_pt", self.config.font_size_pt)
+                    ),
+                    color=color,
+                    bbox=(
+                        dict(facecolor="white", edgecolor="none", pad=0.3, alpha=0.82)
+                        if reference.get("white_box", False)
+                        else None
+                    ),
+                    zorder=6,
+                )
+
+        highlight = panel.get("highlight", {})
+        if highlight:
+            target_x = float(highlight["x"])
+            target_row = min(data, key=lambda row: abs(_as_float(row, xcol) - target_x))
+            ycol = highlight.get(
+                "column",
+                series[0]["column"] if series else "y",
+            )
+            target_y = _as_float(target_row, ycol)
+            color = highlight.get("color", "#C44E52")
+            ax.plot(
+                [target_x],
+                [target_y],
+                linestyle="none",
+                marker=highlight.get("marker", "*"),
+                markersize=float(highlight.get("markersize", 6.0)),
+                markerfacecolor=color,
+                markeredgecolor=highlight.get("markeredgecolor", color),
+                markeredgewidth=float(highlight.get("markeredgewidth", 0.6)),
+                zorder=5,
+            )
+            label = highlight.get("label", "")
+            if label:
+                ax.annotate(
+                    label,
+                    xy=(target_x, target_y),
+                    xytext=tuple(highlight.get("xytext", [-18, 8])),
+                    textcoords="offset points",
+                    ha=highlight.get("ha", "right"),
+                    va=highlight.get("va", "bottom"),
+                    fontsize=float(
+                        highlight.get("font_size_pt", self.config.font_size_pt)
+                    ),
+                    color=color,
+                    bbox=(
+                        dict(facecolor="white", edgecolor="none", pad=0.35, alpha=0.88)
+                        if highlight.get("white_box", False)
+                        else None
+                    ),
+                    arrowprops=dict(
+                        arrowstyle="-",
+                        color=color,
+                        linewidth=0.6,
+                    ),
+                    clip_on=False,
+                    zorder=6,
+                )
+
+        self._apply_y_axis(ax, panel.get("y", {}))
+        ax.yaxis.grid(True, linestyle="--", linewidth=0.45, color="#D0D0D0", zorder=0)
+        if "min" in xspec and "max" in xspec:
+            ax.set_xlim(float(xspec["min"]), float(xspec["max"]))
+        if "ticks" in xspec:
+            ax.set_xticks(xspec["ticks"])
+        if "ticklabels" in xspec:
+            ax.set_xticklabels(xspec["ticklabels"])
+        ax.tick_params(axis="x", pad=float(xspec.get("tick_pad", 1.0)))
+        if xspec.get("label"):
+            ax.set_xlabel(
+                xspec["label"],
+                fontsize=float(xspec.get("label_font_size_pt", self.config.font_size_pt)),
+                labelpad=float(xspec.get("labelpad", 1.0)),
+            )
+        for annotation in panel.get("annotations", []):
+            ax.text(
+                float(annotation["x"]),
+                float(annotation["y"]),
+                annotation["text"],
+                ha=annotation.get("ha", "left"),
+                va=annotation.get("va", "top"),
+                fontsize=float(
+                    annotation.get("font_size_pt", self.config.font_size_pt)
+                ),
+                color=annotation.get("color", "black"),
+                bbox=(
+                    dict(facecolor="white", edgecolor="none", pad=0.3, alpha=0.8)
+                    if annotation.get("white_box", False)
+                    else None
+                ),
+                zorder=6,
+            )
+        self._draw_panel_legend(ax, handles, labels, panel.get("legend", {}))
+        self._caption(ax, panel)
+
+    # ── Image and paired-heatmap panels ─────────────────────────────────
+
+    @staticmethod
+    def _load_image_array(path: Path) -> np.ndarray:
+        if path.suffix.lower() == ".npy":
+            return np.load(path)
+        return plt.imread(path)
+
+    def _draw_image_panel(
+        self,
+        fig: Figure,
+        ax: Axes,
+        panel: Dict[str, Any],
+        base_dir: Path,
+    ) -> None:
+        image = self._load_image_array(base_dir / panel["image"])
+        display = panel.get("display", {})
+        ax.imshow(
+            image,
+            cmap=display.get("cmap", "gray"),
+            vmin=display.get("vmin"),
+            vmax=display.get("vmax"),
+            origin=display.get("origin", "upper"),
+            interpolation=display.get("interpolation", "nearest"),
+            aspect=display.get("aspect", "equal"),
+        )
+        rectangle = panel.get("rectangle", {})
+        if rectangle:
+            ax.add_patch(
+                mpatches.Rectangle(
+                    (float(rectangle["x"]), float(rectangle["y"])),
+                    float(rectangle["width"]),
+                    float(rectangle["height"]),
+                    fill=False,
+                    edgecolor=rectangle.get("color", "#C44E52"),
+                    linewidth=float(rectangle.get("linewidth", 1.0)),
+                    linestyle=rectangle.get("linestyle", "-"),
+                    zorder=5,
+                )
+            )
+            label = rectangle.get("label", "")
+            if label:
+                ax.text(
+                    float(rectangle.get("label_x", rectangle["x"])),
+                    float(rectangle.get("label_y", rectangle["y"])),
+                    label,
+                    ha=rectangle.get("label_ha", "left"),
+                    va=rectangle.get("label_va", "bottom"),
+                    fontsize=float(
+                        rectangle.get("font_size_pt", self.config.font_size_pt)
+                    ),
+                    color=rectangle.get("color", "#C44E52"),
+                    bbox=dict(facecolor="white", edgecolor="none", pad=0.3, alpha=0.75),
+                    zorder=6,
+                )
+        for marker in panel.get("markers", []):
+            color = marker.get("color", "#C44E52")
+            ax.plot(
+                [float(marker["x"])],
+                [float(marker["y"])],
+                linestyle="none",
+                marker=marker.get("marker", "*"),
+                markersize=float(marker.get("markersize", 6.0)),
+                markerfacecolor=marker.get("markerfacecolor", color),
+                markeredgecolor=marker.get("markeredgecolor", color),
+                markeredgewidth=float(marker.get("markeredgewidth", 0.6)),
+                zorder=7,
+            )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_linewidth(self.config.spine_linewidth_pt)
+        self._caption(ax, panel)
+
+    def _draw_heatmap_pair_panel(
+        self,
+        fig: Figure,
+        cell: SubplotSpec,
+        panel: Dict[str, Any],
+        base_dir: Path,
+    ) -> List[Axes]:
+        paths = [base_dir / value for value in panel["arrays"]]
+        arrays = [self._load_image_array(path) for path in paths]
+        background = None
+        if panel.get("background"):
+            background = self._load_image_array(base_dir / panel["background"])
+            crop = panel.get("background_crop", {})
+            if crop:
+                x0 = max(0, int(np.floor(float(crop["x"]))))
+                y0 = max(0, int(np.floor(float(crop["y"]))))
+                x1 = min(
+                    background.shape[1],
+                    int(np.ceil(float(crop["x"]) + float(crop["width"]))),
+                )
+                y1 = min(
+                    background.shape[0],
+                    int(np.ceil(float(crop["y"]) + float(crop["height"]))),
+                )
+                background = background[y0:y1, x0:x1]
+                if background.size == 0:
+                    raise ValueError("heatmap background crop is empty")
+        labels = panel.get("labels", ["Before", "After"])
+        colorbar = panel.get("colorbar", {})
+        inner = cell.subgridspec(
+            1,
+            3,
+            width_ratios=[1.0, 1.0, float(colorbar.get("width_ratio", 0.08))],
+            wspace=float(panel.get("wspace", 0.10)),
+        )
+        axes = [fig.add_subplot(inner[0, 0]), fig.add_subplot(inner[0, 1])]
+        cax = fig.add_subplot(inner[0, 2])
+        outer = fig.add_subplot(cell, frame_on=False)
+        outer.patch.set_alpha(0.0)
+        outer.set_xticks([])
+        outer.set_yticks([])
+        for spine in outer.spines.values():
+            spine.set_visible(False)
+
+        image = None
+        for index, (ax, array) in enumerate(zip(axes, arrays)):
+            origin = panel.get("origin", "upper")
+            if origin == "lower":
+                extent = (-0.5, array.shape[1] - 0.5, -0.5, array.shape[0] - 0.5)
+            else:
+                extent = (-0.5, array.shape[1] - 0.5, array.shape[0] - 0.5, -0.5)
+            if background is not None:
+                background_display = panel.get("background_display", {})
+                ax.imshow(
+                    background,
+                    cmap=background_display.get("cmap", "gray"),
+                    vmin=background_display.get("vmin"),
+                    vmax=background_display.get("vmax"),
+                    origin=background_display.get("origin", "lower"),
+                    interpolation=background_display.get("interpolation", "bilinear"),
+                    extent=extent,
+                    aspect="equal",
+                    zorder=1,
+                )
+            image = ax.imshow(
+                array,
+                cmap=panel.get("cmap", "magma"),
+                vmin=float(panel.get("vmin", 0.0)),
+                vmax=float(panel.get("vmax", max(float(np.max(a)) for a in arrays))),
+                origin=origin,
+                interpolation=panel.get("interpolation", "nearest"),
+                alpha=float(panel.get("alpha", 1.0)),
+                extent=extent,
+                aspect="equal",
+                zorder=2,
+            )
+            ax.set_title(
+                labels[index],
+                fontsize=float(panel.get("title_font_size_pt", self.config.font_size_pt)),
+                pad=float(panel.get("title_pad", 1.0)),
+            )
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_linewidth(self.config.spine_linewidth_pt)
+
+        assert image is not None
+        cb = fig.colorbar(image, cax=cax, ticks=colorbar.get("ticks"))
+        cb.ax.tick_params(
+            labelsize=float(colorbar.get("font_size_pt", self.config.font_size_pt)),
+            width=self.config.spine_linewidth_pt,
+            length=2.0,
+            pad=1.0,
+        )
+        if colorbar.get("align_endpoint_ticks_inside", False):
+            tick_labels = cb.ax.get_yticklabels()
+            if tick_labels:
+                tick_labels[0].set_verticalalignment("bottom")
+                tick_labels[-1].set_verticalalignment("top")
+        cb.set_label(
+            colorbar.get("label", ""),
+            fontsize=float(colorbar.get("font_size_pt", self.config.font_size_pt)),
+            labelpad=float(colorbar.get("labelpad", 1.0)),
+        )
+        caption = panel.get("caption", "")
+        if caption:
+            caption_font_size = float(
+                panel.get("caption_font_size_pt", self.config.font_size_pt + 1)
+            )
+            if panel.get("caption_position") == "below":
+                outer.text(
+                    float(panel.get("caption_x", 0.5)),
+                    float(panel.get("caption_y", -0.34)),
+                    caption,
+                    transform=outer.transAxes,
+                    ha="center",
+                    va="top",
+                    fontsize=caption_font_size,
+                    clip_on=False,
+                )
+            else:
+                outer.set_xlabel(
+                    caption,
+                    fontsize=caption_font_size,
+                    labelpad=float(panel.get("caption_labelpad", 1.0)),
+                )
+        return [outer, *axes, cax]
+
+    def _draw_heatmap_overlay_panel(
+        self,
+        fig: Figure,
+        cell: SubplotSpec,
+        panel: Dict[str, Any],
+        base_dir: Path,
+    ) -> List[Axes]:
+        array = self._load_image_array(base_dir / panel["array"])
+        background = None
+        if panel.get("background"):
+            background = self._load_image_array(base_dir / panel["background"])
+            crop = panel.get("background_crop", {})
+            if crop:
+                x0 = max(0, int(np.floor(float(crop["x"]))))
+                y0 = max(0, int(np.floor(float(crop["y"]))))
+                x1 = min(
+                    background.shape[1],
+                    int(np.ceil(float(crop["x"]) + float(crop["width"]))),
+                )
+                y1 = min(
+                    background.shape[0],
+                    int(np.ceil(float(crop["y"]) + float(crop["height"]))),
+                )
+                background = background[y0:y1, x0:x1]
+                if background.size == 0:
+                    raise ValueError("heatmap background crop is empty")
+
+        colorbar = panel.get("colorbar", {})
+        colorbar_side = colorbar.get("side", "right")
+        colorbar_width = float(colorbar.get("width_ratio", 0.055))
+        if colorbar_side == "left":
+            inner = cell.subgridspec(
+                1,
+                2,
+                width_ratios=[colorbar_width, 1.0],
+                wspace=float(panel.get("wspace", 0.06)),
+            )
+            cax = fig.add_subplot(inner[0, 0])
+            ax = fig.add_subplot(inner[0, 1])
+        else:
+            inner = cell.subgridspec(
+                1,
+                2,
+                width_ratios=[1.0, colorbar_width],
+                wspace=float(panel.get("wspace", 0.06)),
+            )
+            ax = fig.add_subplot(inner[0, 0])
+            cax = fig.add_subplot(inner[0, 1])
+        outer = fig.add_subplot(cell, frame_on=False)
+        outer.patch.set_alpha(0.0)
+        outer.set_xticks([])
+        outer.set_yticks([])
+        for spine in outer.spines.values():
+            spine.set_visible(False)
+
+        origin = panel.get("origin", "upper")
+        if origin == "lower":
+            extent = (-0.5, array.shape[1] - 0.5, -0.5, array.shape[0] - 0.5)
+        else:
+            extent = (-0.5, array.shape[1] - 0.5, array.shape[0] - 0.5, -0.5)
+        if background is not None:
+            background_display = panel.get("background_display", {})
+            ax.imshow(
+                background,
+                cmap=background_display.get("cmap", "gray"),
+                vmin=background_display.get("vmin"),
+                vmax=background_display.get("vmax"),
+                origin=background_display.get("origin", origin),
+                interpolation=background_display.get("interpolation", "bilinear"),
+                extent=extent,
+                aspect="equal",
+                zorder=1,
+            )
+        image = ax.imshow(
+            array,
+            cmap=panel.get("cmap", "coolwarm"),
+            vmin=float(panel.get("vmin", 0.0)),
+            vmax=float(panel.get("vmax", np.max(array))),
+            origin=origin,
+            interpolation=panel.get("interpolation", "nearest"),
+            alpha=float(panel.get("alpha", 0.76)),
+            extent=extent,
+            aspect="equal",
+            zorder=2,
+        )
+        rectangle = panel.get("rectangle", {})
+        if rectangle:
+            ax.add_patch(
+                mpatches.Rectangle(
+                    (float(rectangle["x"]), float(rectangle["y"])),
+                    float(rectangle["width"]),
+                    float(rectangle["height"]),
+                    fill=False,
+                    edgecolor=rectangle.get("color", "#C44E52"),
+                    linewidth=float(rectangle.get("linewidth", 1.0)),
+                    zorder=5,
+                )
+            )
+        for marker in panel.get("markers", []):
+            color = marker.get("color", "#C44E52")
+            ax.plot(
+                [float(marker["x"])],
+                [float(marker["y"])],
+                linestyle="none",
+                marker=marker.get("marker", "*"),
+                markersize=float(marker.get("markersize", 6.0)),
+                markerfacecolor=marker.get("markerfacecolor", color),
+                markeredgecolor=marker.get("markeredgecolor", color),
+                markeredgewidth=float(marker.get("markeredgewidth", 0.6)),
+                zorder=6,
+            )
+        ax.set_title(
+            panel.get("title", ""),
+            fontsize=float(panel.get("title_font_size_pt", self.config.font_size_pt)),
+            pad=float(panel.get("title_pad", 1.0)),
+        )
+        ax.set_anchor(panel.get("anchor", "C"))
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_linewidth(self.config.spine_linewidth_pt)
+
+        cb = fig.colorbar(image, cax=cax, ticks=colorbar.get("ticks"))
+        tick_side = colorbar.get(
+            "tick_side", "left" if colorbar_side == "left" else "right"
+        )
+        if tick_side == "left":
+            cb.ax.yaxis.set_ticks_position("left")
+            cb.ax.yaxis.set_label_position("left")
+        else:
+            cb.ax.yaxis.set_ticks_position("right")
+            cb.ax.yaxis.set_label_position("right")
+        cb.ax.tick_params(
+            labelsize=float(colorbar.get("font_size_pt", self.config.font_size_pt)),
+            width=self.config.spine_linewidth_pt,
+            length=2.0,
+            pad=float(colorbar.get("tick_pad", 1.0)),
+        )
+        if colorbar.get("align_endpoint_ticks_inside", False):
+            tick_labels = cb.ax.get_yticklabels()
+            if tick_labels:
+                tick_labels[0].set_verticalalignment("bottom")
+                tick_labels[-1].set_verticalalignment("top")
+        cb.set_label(
+            colorbar.get("label", ""),
+            fontsize=float(colorbar.get("font_size_pt", self.config.font_size_pt)),
+            labelpad=float(colorbar.get("labelpad", 1.0)),
+        )
+        for annotation in panel.get("annotations", []):
+            ax.text(
+                float(annotation.get("x", 0.03)),
+                float(annotation.get("y", 0.97)),
+                annotation.get("text", ""),
+                transform=ax.transAxes,
+                ha=annotation.get("ha", "left"),
+                va=annotation.get("va", "top"),
+                fontsize=float(
+                    annotation.get("font_size_pt", self.config.font_size_pt)
+                ),
+                color=annotation.get("color", "#222222"),
+                linespacing=float(annotation.get("linespacing", 1.0)),
+                bbox=(
+                    {
+                        "facecolor": annotation.get("box_facecolor", "white"),
+                        "edgecolor": annotation.get("box_edgecolor", "none"),
+                        "pad": float(annotation.get("box_pad", 0.6)),
+                        "alpha": float(annotation.get("box_alpha", 0.76)),
+                    }
+                    if annotation.get("white_box", False)
+                    else None
+                ),
+                zorder=7,
+            )
+        caption = panel.get("caption", "")
+        if caption:
+            outer.text(
+                float(panel.get("caption_x", 0.5)),
+                float(panel.get("caption_y", -0.14)),
+                caption,
+                transform=outer.transAxes,
+                ha="center",
+                va="top",
+                fontsize=float(
+                    panel.get("caption_font_size_pt", self.config.font_size_pt + 1)
+                ),
+                clip_on=False,
+            )
+        return [outer, ax, cax]
 
     def _draw_grouped_stacked_bar(
         self,
@@ -553,6 +1214,7 @@ class ComposeRenderer(BaseRenderer):
             fontsize=cfg.font_size_pt,
         )
         ax.tick_params(axis="x", which="both", length=0, pad=1.0)
+        parent_bottom = None
         if two:
             parent_bottom = _draw_compose_parent_xlabels(
                 fig, ax, parent_centers, parent_labels,
@@ -587,7 +1249,7 @@ class ComposeRenderer(BaseRenderer):
                 for i, item in enumerate(segments)
             ]
             self._draw_panel_legend(ax, handles, [s["label"] for s in segments], legend)
-        self._caption(ax, panel)
+        self._caption(ax, panel, parent_bottom=parent_bottom)
 
     # ── Decomposition + ratio panel ─────────────────────────────────────────
 
@@ -832,6 +1494,37 @@ class ComposeRenderer(BaseRenderer):
         ax.set_ylabel(yspec.get("label", ""), fontsize=cfg.font_size_pt, labelpad=2)
         ax.tick_params(axis="y", pad=1.2)
 
+    def _draw_value_labels(
+        self,
+        ax: Axes,
+        positions: List[Tuple[float, float]],
+        spec: Dict[str, Any],
+        labels: List[str] | None = None,
+    ) -> None:
+        if spec.get("show", False) is False:
+            return
+        y_low, y_high = ax.get_ylim()
+        offset = float(spec.get("offset", 0.018 * (y_high - y_low)))
+        format_string = spec.get("format", "{:.1f}")
+        suffix = spec.get("suffix", "")
+        for index, (x, value) in enumerate(positions):
+            text = (
+                labels[index]
+                if labels is not None and index < len(labels) and labels[index]
+                else format_string.format(value) + suffix
+            )
+            ax.text(
+                x,
+                value + offset,
+                text,
+                ha="center",
+                va="bottom",
+                fontsize=float(spec.get("font_size_pt", self.config.font_size_pt)),
+                color=spec.get("color", "black"),
+                clip_on=False,
+                zorder=6,
+            )
+
     def _draw_panel_legend(
         self,
         ax: Axes,
@@ -875,7 +1568,7 @@ class ComposeRenderer(BaseRenderer):
             bbox_to_anchor=tuple(anchor),
             ncol=ncol,
             frameon=False,
-            fontsize=cfg.font_size_pt,
+            fontsize=float(spec.get("font_size_pt", cfg.font_size_pt)),
             handlelength=float(spec.get("handlelength", 1.0)),
             handleheight=float(spec.get("handleheight", 1.0)),
             handletextpad=float(spec.get("handletextpad", 0.35)),
@@ -938,13 +1631,39 @@ class ComposeRenderer(BaseRenderer):
         for idx, leg in enumerate(legends):
             leg.set_bbox_to_anchor((1.0, 1.01 + idx * row_step), transform=ax.transAxes)
 
-    def _caption(self, ax: Axes, panel: Dict[str, Any]) -> None:
+    def _caption(
+        self,
+        ax: Axes,
+        panel: Dict[str, Any],
+        *,
+        parent_bottom: float | None = None,
+    ) -> None:
         caption = panel.get("caption")
         if caption:
             position = panel.get("caption_position", "xlabel")
             caption_font_size = float(
                 panel.get("caption_font_size_pt", self.config.font_size_pt + 1)
             )
+            if position == "below_parent" and parent_bottom is not None:
+                caption_transform = offset_copy(
+                    ax.transAxes,
+                    fig=ax.figure,
+                    x=0.0,
+                    y=-float(panel.get("caption_pad_pt", 1.0)),
+                    units="points",
+                )
+                ax.text(
+                    float(panel.get("caption_x", 0.5)),
+                    parent_bottom,
+                    caption,
+                    transform=caption_transform,
+                    ha="center",
+                    va="top",
+                    fontsize=caption_font_size,
+                    fontweight=panel.get("caption_weight", "normal"),
+                    clip_on=False,
+                )
+                return
             if position == "top_left":
                 ax.text(
                     float(panel.get("caption_x", -0.10)),
@@ -970,6 +1689,19 @@ class ComposeRenderer(BaseRenderer):
                     fontweight=panel.get("caption_weight", "bold"),
                     bbox=dict(facecolor="white", edgecolor="none", pad=0.4, alpha=0.85),
                     zorder=6,
+                )
+                return
+            if position == "below":
+                ax.text(
+                    float(panel.get("caption_x", 0.5)),
+                    float(panel.get("caption_y", -0.34)),
+                    caption,
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="top",
+                    fontsize=caption_font_size,
+                    fontweight=panel.get("caption_weight", "normal"),
+                    clip_on=False,
                 )
                 return
             ax.set_xlabel(

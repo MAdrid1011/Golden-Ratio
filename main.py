@@ -63,10 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Figure width in typographic points (1 pt = 1/72 in).")
     p.add_argument("--height_pt", type=float, default=None,
                    help="Figure height in pt. Defaults to width × 0.618 (golden rectangle).")
+    p.add_argument("--preserve_canvas", action="store_true",
+                   help="Export the exact requested canvas size instead of tightly cropping content.")
+    p.add_argument("--tight_pad_pt", type=float, default=None,
+                   help="Outer padding in pt for tightly cropped exports.")
+    p.add_argument("--layout_pad", type=float, default=None,
+                   help="Optional Matplotlib tight-layout pad for compact single-panel charts.")
 
     # ── Y-axis control ────────────────────────────────────────────────────────
     p.add_argument("--y_ticks", type=int, default=5,
                    help="Target number of y-axis ticks.")
+    p.add_argument("--exact_y_ticks", action="store_true",
+                   help="Use exactly --y_ticks values between explicit y-axis bounds.")
     p.add_argument("--y_min", type=float, default=None,
                    help="Override y-axis minimum.")
     p.add_argument("--y_max", type=float, default=None,
@@ -89,15 +97,22 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Number of columns for multi-panel ablation/decomp figures.")
     p.add_argument("--pair_last_bars", action="store_true",
                    help="Remove the gap between the last two bars in each decomp group.")
+    p.add_argument("--pair_bar_groups", action="store_true",
+                   help="Arrange decomp bars as adjacent pairs with a larger gap between pairs.")
     p.add_argument("--compact_decomp_legend", action="store_true",
                    help="Use a compact path-hue and stage-lightness legend for decomp charts.")
     p.add_argument("--compact_decomp_legend_rows", type=int, choices=(1, 2),
                    default=1,
                    help="Place compact decomp legend dimensions on one row or "
                         "on separate rows.")
+    p.add_argument("--decomp_segment_legend_first", action="store_true",
+                   help="Place the segment legend row above the bar legend row.")
     p.add_argument("--shared_panel_legend", action="store_true",
                    help="For multi-panel decomp charts, keep the legend only "
                         "above the first panel.")
+    p.add_argument("--shared_segment_legend", action="store_true",
+                   help="For multi-panel compact two-row decomp charts, keep "
+                        "the segment legend only above the first panel.")
     p.add_argument("--decomp_bar_legend_title", default="Path",
                    help="Heading for comparison bars in a compact decomp legend.")
     p.add_argument("--decomp_segment_legend_title", default="Stage",
@@ -135,6 +150,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Append the decomp legend note to the final series label.")
     p.add_argument("--parent_label_gap_pt", type=float, default=2.0,
                    help="Gap in pt between minor and major labels on a two-level x-axis.")
+    p.add_argument("--panel_caption_pad_pt", type=float, default=2.0,
+                   help="Padding in pt between a panel caption and its x-axis label stack.")
+    p.add_argument("--panel_y_offsets_pt", type=float, nargs="+", default=[],
+                   help="Per-panel vertical offsets in pt. Positive values move panels up.")
     p.add_argument("--font_size_pt", type=float, default=7.0,
                    help="Tick-label and legend font size in pt (ACM minimum: 7).")
     p.add_argument("--label_font_size_pt", type=float, default=None,
@@ -167,9 +186,13 @@ def main(argv: list[str] | None = None) -> int:
         mode=args.mode,
         width_pt=args.width_pt,
         height_pt=args.height_pt,
+        preserve_canvas=args.preserve_canvas,
+        tight_pad_pt=args.tight_pad_pt,
+        layout_pad=args.layout_pad,
         font_size_pt=args.font_size_pt,
         label_font_size_pt=args.label_font_size_pt,
         y_ticks=args.y_ticks,
+        exact_y_ticks=args.exact_y_ticks,
         y_min=args.y_min,
         y_max=args.y_max,
         right_y_min=args.right_y_min,
@@ -180,9 +203,12 @@ def main(argv: list[str] | None = None) -> int:
         two_level_xaxis=args.two_level_xaxis,
         panel_cols=max(1, args.panel_cols),
         pair_last_bars=args.pair_last_bars,
+        pair_bar_groups=args.pair_bar_groups,
         compact_decomp_legend=args.compact_decomp_legend,
         compact_decomp_legend_rows=args.compact_decomp_legend_rows,
+        decomp_segment_legend_first=args.decomp_segment_legend_first,
         shared_panel_legend=args.shared_panel_legend,
+        shared_segment_legend=args.shared_segment_legend,
         decomp_bar_legend_title=args.decomp_bar_legend_title,
         decomp_segment_legend_title=args.decomp_segment_legend_title,
         show_segment_delta=args.show_segment_delta,
@@ -198,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
         legend_note_first=args.legend_note_first,
         inline_legend_note=args.inline_legend_note,
         parent_label_gap_pt=args.parent_label_gap_pt,
+        panel_caption_pad_pt=max(0.0, args.panel_caption_pad_pt),
+        panel_y_offsets_pt=args.panel_y_offsets_pt,
         palette_hue=args.palette_hue,
         custom_palette=args.palette,
     )

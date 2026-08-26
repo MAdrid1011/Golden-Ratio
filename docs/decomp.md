@@ -201,11 +201,13 @@ Entries are arranged in as many columns as fit in a single legend row at the top
 | `--cumulative_boundary_font_size_pt` | auto | Requested cumulative-label size, capped to fit within the physical bar width. |
 | `--decomp_bar_only_legend` | off | Show one legend entry per comparison bar and omit segment entries. |
 | `--compact_decomp_legend_rows` | `1` | Keep compact legend dimensions on one row or split them across `2` rows. |
+| `--decomp_segment_legend_first` | off | Place the segment legend row above the bar legend row when using two compact rows. |
 | `--shared_panel_legend` | off | In a multi-panel decomp figure, draw the common legend only above the first panel. |
 | `--decomp_bar_legend_title` | `Path` | Heading for comparison bars in the compact legend. |
 | `--decomp_segment_legend_title` | `Stage` | Heading for segments in the compact legend. |
-| `--decomp_right_bar` | empty | Render the named comparison bar against a secondary right y-axis. |
+| `--decomp_right_bar` | empty | Render the named comparison bar against a secondary right y-axis. Separate multiple names with commas. |
 | `--decomp_right_y_label` | empty | Label for the optional secondary right y-axis. |
+| `--pair_bar_groups` | off | Arrange adjacent bars as pairs with a larger gap between each pair. |
 
 ---
 

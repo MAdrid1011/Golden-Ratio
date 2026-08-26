@@ -86,6 +86,15 @@ Method B,8,84.2,19.1
 
 Metadata rows begin with a special `group` token and are stripped before rendering.
 
+### `__xlabel__` — x-axis quantity name
+
+```csv
+__xlabel__,Active records per Pod,,
+```
+
+When a panel also has a caption, the quantity name is placed immediately above
+the panel caption.
+
 ### `__caption__` — panel subtitle
 
 ```csv
@@ -145,7 +154,7 @@ The total figure width is always `--width_pt` (default 240 pt).
 
 | Panel count | Arrangement |
 |-------------|-------------|
-| 1 – 4 | One row of *n* panels |
+| 1 – 4 | One row of *n* panels, unless `--panel_cols` requests an even grid |
 | *n* > 4 and *n* divisible by 3 | Rows of 3 (preferred) |
 | *n* > 4 and *n* divisible by 2 | Rows of 2 |
 | otherwise | **Error** — choose a panel count that satisfies one of the above |
@@ -192,6 +201,7 @@ For single-group panels (blank `group` column) no legend is rendered.
 | `--formats fmt …` | `pdf png` | Output formats: `pdf`, `png`, `svg`, `eps`. |
 | `--width_pt` | `240` | Total figure width in typographic points. |
 | `--font_size_pt` | `7` | Font size in pt. **Sensitivity mode allows 6 pt** (ACM allows reduced size for sub-figures). |
+| `--panel_cols` | `1` | Set to `2` to arrange four panels as a 2×2 grid. |
 
 ---
 

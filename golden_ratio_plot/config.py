@@ -41,6 +41,9 @@ class PlotConfig:
     # Wider figures (e.g. 540 pt double-column) stay at the same compact height.
     # Set explicitly to override.
     height_pt: Optional[float] = None
+    preserve_canvas: bool = False          # keep the requested width/height at export
+    tight_pad_pt: Optional[float] = None   # None keeps the half-spine safety pad
+    layout_pad: Optional[float] = None     # optional tight_layout pad override
 
     # ── Typography ───────────────────────────────────────────────────────────
     font_size_pt: float = 7.0             # tick labels and legend — ACM minimum
@@ -57,6 +60,7 @@ class PlotConfig:
 
     # ── Y-axis ───────────────────────────────────────────────────────────────
     y_ticks: int = 5                      # target number of y-axis ticks
+    exact_y_ticks: bool = False           # use exactly y_ticks between explicit bounds
     y_min: Optional[float] = None         # None → auto
     y_max: Optional[float] = None         # None → auto
     right_y_min: Optional[float] = None   # explicit lower bound for an overlaid right axis
@@ -69,9 +73,12 @@ class PlotConfig:
     two_level_xaxis: bool = False         # use major_group/minor_group CSV columns
     panel_cols: int = 1                   # columns for multi-panel ablation/decomp figures
     pair_last_bars: bool = False          # remove the gap between the last two decomp bars
+    pair_bar_groups: bool = False         # visually pair adjacent decomp bars
     compact_decomp_legend: bool = False   # encode decomp path hue and stage lightness separately
     compact_decomp_legend_rows: int = 1
+    decomp_segment_legend_first: bool = False
     shared_panel_legend: bool = False
+    shared_segment_legend: bool = False
     decomp_bar_legend_title: str = "Path"
     decomp_segment_legend_title: str = "Stage"
     show_segment_delta: bool = False      # annotate the upper part of two-segment bars
@@ -87,6 +94,8 @@ class PlotConfig:
     legend_note_first: bool = False       # place decomp legend-note row above data-series rows
     inline_legend_note: bool = False      # append the legend note to the final series label
     parent_label_gap_pt: float = 2.0      # vertical gap between two-level x-axis labels
+    panel_caption_pad_pt: float = 2.0     # padding between a panel caption and the x-label stack
+    panel_y_offsets_pt: List[float] = field(default_factory=list)
 
     # ── Colors ───────────────────────────────────────────────────────────────
     # Custom palette: list of hex/CSS color strings, one per unique label.

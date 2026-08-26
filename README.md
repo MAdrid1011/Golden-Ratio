@@ -51,6 +51,10 @@ python main.py --mode compose \
   --output out/Compose_two_panel --formats pdf png svg
 ```
 
+Add `--preserve_canvas` when the exported page must retain the exact
+`--width_pt` and `--height_pt` dimensions.
+Use `--tight_pad_pt 0` when a tightly cropped export must have no outer margin.
+
 Each run writes a `.pdf` and `.png` at the output path.
 
 ---

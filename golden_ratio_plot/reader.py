@@ -141,6 +141,7 @@ class SensitivityData:
     x_values    : ordered x-axis category labels (strings, shown on x-axis ticks).
     left_label  : left y-axis label — taken from the CSV column header.
     right_label : right y-axis label — taken from the CSV column header.
+    x_label     : optional x-axis quantity name from ``__xlabel__`` metadata.
     left_data   : group → list of left-y values, aligned with ``x_values``.
     right_data  : group → list of right-y values, aligned with ``x_values``.
     caption     : subfigure label, e.g. ``"(a) Effect of K"``.
@@ -154,6 +155,7 @@ class SensitivityData:
     right_data: Dict[str, List[float]] = field(default_factory=dict)
     right_series_labels: List[str] = field(default_factory=list)
     right_series_data: Dict[str, Dict[str, List[float]]] = field(default_factory=dict)
+    x_label: str = ""
     caption: str = ""
     left_mode: str = "variation"   # "variation" | "stable"
     right_mode: str = "variation"  # "variation" | "stable"
@@ -248,6 +250,7 @@ def read_sensitivity_csv(path: str | Path) -> SensitivityData:
         # Collect raw rows first so we can align all groups to the same x_values
         rows: List[Tuple[str, str, float, List[float]]] = []
         caption = ""
+        x_label = ""
         left_mode = "variation"
         right_mode = "variation"
         interp_pts = 0
@@ -268,6 +271,8 @@ def read_sensitivity_csv(path: str | Path) -> SensitivityData:
             if group.startswith("__"):
                 if group == "__caption__":
                     caption = left_raw or right_raw
+                elif group == "__xlabel__":
+                    x_label = x_raw or left_raw or right_raw
                 elif group == "__ymode__":
                     if left_raw:
                         left_mode = left_raw.lower()
@@ -353,6 +358,7 @@ def read_sensitivity_csv(path: str | Path) -> SensitivityData:
         right_data=right_data,
         right_series_labels=right_cols,
         right_series_data=right_series_data,
+        x_label=x_label,
         caption=caption,
         left_mode=left_mode,
         right_mode=right_mode,
