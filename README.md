@@ -23,6 +23,9 @@ pip install -r requirements.txt
 # Ablation — single panel
 python main.py --input examples/ablation_example_single.csv --output out/fig
 
+# Ablation — single panel with multiple right-axis line overlays
+python main.py --input bars.csv --input_lines p95.csv p99.csv --output out/fig_lines
+
 # Ablation — two stacked panels, each with a right-axis line overlay
 python main.py --inputs panel_a.csv panel_b.csv \
                --input_lines line_a.csv line_b.csv --output out/fig_multi

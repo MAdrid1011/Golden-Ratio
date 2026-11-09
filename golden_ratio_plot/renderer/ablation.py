@@ -51,6 +51,12 @@ _STRICT_TOLERANCE = 0.5
 # Fixed headroom above the tallest bar (or tallest value label) in pt.
 _TOP_PAD_PT = 5.0
 _PARENT_BOUNDARY_PAD_PT = 1.0
+_MULTI_LINE_STYLES = (
+    ("#3c796c", "-", "o"),
+    ("#af704d", "--", "^"),
+    ("#76558f", "-.", "s"),
+    ("#4f6d9a", ":", "D"),
+)
 
 
 class AblationRenderer(BaseRenderer):
@@ -72,6 +78,26 @@ class AblationRenderer(BaseRenderer):
     """
 
     # ── Public multi-panel API ────────────────────────────────────────────────
+
+    def render_with_lines(
+        self,
+        data: AblationData,
+        line_datasets: List[AblationData],
+    ) -> None:
+        """Render one bar panel with multiple series on the right axis."""
+        self._apply_rcparams()
+        fig, ax = self._make_figure()
+        self._configure_spines(ax)
+        self._configure_ticks(ax)
+        state = self._draw_content(fig, ax, data, line_data_overrides=line_datasets)
+        if self.config.layout_pad is None:
+            fig.tight_layout()
+        else:
+            fig.tight_layout(pad=max(0.0, self.config.layout_pad))
+        fig.canvas.draw()
+        self._draw_finalize(fig, ax, state, fig.canvas.get_renderer())
+        self._save(fig)
+        plt.close(fig)
 
     def render_panels(
         self,
@@ -174,6 +200,7 @@ class AblationRenderer(BaseRenderer):
         ax: Axes,
         data: AblationData,
         line_data_override: Optional[AblationData] = None,
+        line_data_overrides: Optional[List[AblationData]] = None,
     ) -> Dict:
         """Phase 1: draw all chart content and create initial legend positions.
 
@@ -187,24 +214,33 @@ class AblationRenderer(BaseRenderer):
         colors = palette_from_config(data.n_labels, cfg.custom_palette, cfg.palette_hue)
 
         # ── Load optional line-chart data ─────────────────────────────────────
-        line_data: Optional[AblationData] = None
+        line_datasets: List[AblationData] = []
         ax2: Optional[Axes] = None
-        line_color: Optional[Tuple[float, float, float]] = None
         line_y_label = ""
-        line_legend_key = ""
+        line_specs: List[Tuple[object, str, str, str]] = []
         line_data_max = 0.0
 
-        if line_data_override is not None:
-            line_data = line_data_override
+        if line_data_overrides is not None:
+            line_datasets = list(line_data_overrides)
+        elif line_data_override is not None:
+            line_datasets = [line_data_override]
         elif cfg.input_line:
-            line_data = read_csv(cfg.input_line)
+            line_datasets = [read_csv(cfg.input_line)]
 
-        if line_data is not None:
-            line_y_label, line_legend_key = _split_label_key(line_data.value_label)
-            line_data_max = max(line_data.all_values())
-            # Complementary hue for harmonious contrast: blue (210°) → orange (30°)
-            line_hue = (cfg.palette_hue + 180.0) % 360.0
-            line_color = colorsys.hls_to_rgb(line_hue / 360.0, 0.50, 0.80)
+        for index, line_data in enumerate(line_datasets):
+            axis_label, legend_key = _split_label_key(line_data.value_label)
+            if index == 0:
+                line_y_label = axis_label
+            elif axis_label != line_y_label:
+                raise ValueError("right-axis line datasets must use the same axis label")
+            line_data_max = max(line_data_max, max(line_data.all_values()))
+            if len(line_datasets) == 1:
+                line_hue = (cfg.palette_hue + 180.0) % 360.0
+                color = colorsys.hls_to_rgb(line_hue / 360.0, 0.50, 0.80)
+                line_specs.append((color, "--", "o", legend_key))
+            else:
+                color, linestyle, marker = _MULTI_LINE_STYLES[index % len(_MULTI_LINE_STYLES)]
+                line_specs.append((color, linestyle, marker, legend_key))
 
         # ── Determine group label display mode ────────────────────────────────
         panel_cols = max(1, int(getattr(cfg, "panel_cols", 1)))
@@ -286,58 +322,45 @@ class AblationRenderer(BaseRenderer):
         )
 
         # ── Line chart on twin right axis ─────────────────────────────────────
-        if line_data is not None and line_color is not None:
+        if line_datasets:
             ax2 = ax.twinx()
-
-            if line_data.n_labels == 1:
-                line_label = line_data.labels[0]
-                ys = [line_data.data.get((group, line_label)) for group in data.groups]
-                if all(y is not None for y in ys):
-                    ranges = [(0, len(data.groups))]
-                    if cfg.two_level_xaxis and data.major_group:
-                        ranges = []
-                        start = 0
-                        current = data.major_group.get(data.groups[0], data.groups[0])
-                        for i in range(1, len(data.groups) + 1):
-                            parent = (
-                                data.major_group.get(data.groups[i], data.groups[i])
-                                if i < len(data.groups)
-                                else None
+            for line_data, (line_color, linestyle, marker, _) in zip(line_datasets, line_specs):
+                if line_data.n_labels == 1:
+                    line_label = line_data.labels[0]
+                    ys = [line_data.data.get((group, line_label)) for group in data.groups]
+                    if all(y is not None for y in ys):
+                        ranges = [(0, len(data.groups))]
+                        if cfg.two_level_xaxis and data.major_group:
+                            ranges = []
+                            start = 0
+                            current = data.major_group.get(data.groups[0], data.groups[0])
+                            for i in range(1, len(data.groups) + 1):
+                                parent = (data.major_group.get(data.groups[i], data.groups[i])
+                                          if i < len(data.groups) else None)
+                                if parent != current:
+                                    ranges.append((start, i))
+                                    if i < len(data.groups):
+                                        start, current = i, parent
+                        for start, end in ranges:
+                            ax2.plot(
+                                group_centers[start:end], ys[start:end],
+                                color=line_color, linestyle=linestyle,
+                                linewidth=0.8, marker=marker, markersize=2.8,
+                                markerfacecolor="white", markeredgecolor=line_color,
+                                markeredgewidth=0.65, zorder=5,
                             )
-                            if parent != current:
-                                ranges.append((start, i))
-                                if i < len(data.groups):
-                                    start = i
-                                    current = parent
-                    for start, end in ranges:
+                else:
+                    for g, group in enumerate(data.groups):
+                        xs = [positions[g][l_idx] for l_idx in range(data.n_labels)]
+                        ys = [line_data.data.get((group, label)) for label in data.labels]
+                        if any(y is None for y in ys):
+                            continue
                         ax2.plot(
-                            group_centers[start:end], ys[start:end],
-                            color=line_color,
-                            linestyle="--",
-                            linewidth=0.8,
-                            marker="o",
-                            markersize=2.0,
-                            markerfacecolor=line_color,
-                            markeredgewidth=0,
-                            zorder=5,
+                            xs, ys, color=line_color, linestyle=linestyle,
+                            linewidth=0.8, marker=marker, markersize=2.8,
+                            markerfacecolor="white", markeredgecolor=line_color,
+                            markeredgewidth=0.65, zorder=5,
                         )
-            else:
-                for g, group in enumerate(data.groups):
-                    xs = [positions[g][l_idx] for l_idx in range(data.n_labels)]
-                    ys = [line_data.data.get((group, label)) for label in data.labels]
-                    if any(y is None for y in ys):
-                        continue
-                    ax2.plot(
-                        xs, ys,
-                        color=line_color,
-                        linestyle="--",
-                        linewidth=0.8,
-                        marker="o",
-                        markersize=2.0,
-                        markerfacecolor=line_color,
-                        markeredgewidth=0,
-                        zorder=5,
-                    )
 
             if cfg.right_y_min is not None or cfg.right_y_max is not None:
                 right_min = cfg.right_y_min if cfg.right_y_min is not None else 0.0
@@ -464,8 +487,7 @@ class AblationRenderer(BaseRenderer):
         all_legs, n_color_rows = _draw_legend_init(
             fig, ax, colors, color_labels, mapping_labels, cfg,
             font_size=xlbl_fontsize,
-            line_color=line_color,
-            line_legend_key=line_legend_key,
+            line_specs=line_specs,
             legend_note=data.legend_note if cfg.inline_legend_note else "",
         )
 
@@ -1001,8 +1023,7 @@ def _draw_legend_init(
     cfg: PlotConfig,
     *,
     font_size: Optional[float] = None,
-    line_color: Optional[Tuple[float, float, float]] = None,
-    line_legend_key: str = "",
+    line_specs: Optional[List[Tuple[object, str, str, str]]] = None,
     legend_note: str = "",
 ) -> Tuple[List, int]:
     """Phase 1 of legend drawing: create all legend artists at y=1.01.
@@ -1024,17 +1045,15 @@ def _draw_legend_init(
     ]
     labels = list(color_labels)
 
-    if line_color is not None and line_legend_key:
-        dot_handle = Line2D(
-            [0], [0],
-            marker="o",
-            color="none",
-            markerfacecolor=line_color,
-            markeredgewidth=0,
-            markersize=fs * 0.55,
-            linestyle="none",
-        )
-        handles.append(dot_handle)
+    for line_color, linestyle, marker, line_legend_key in line_specs or []:
+        if not line_legend_key:
+            continue
+        handles.append(Line2D(
+            [0], [0], marker=marker, color=line_color,
+            markerfacecolor="white", markeredgecolor=line_color,
+            markeredgewidth=0.65, markersize=fs * 0.35,
+            linestyle=linestyle, linewidth=0.8,
+        ))
         labels.append(line_legend_key)
 
     if legend_note and labels:

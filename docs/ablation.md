@@ -24,6 +24,10 @@ python main.py --input examples/ablation_example_single.csv \
                --input_line examples/ablation_line_overlay.csv \
                --output out/fig_line
 
+# Single panel with multiple right-axis line overlays
+python main.py --input bars.csv --input_lines p95.csv p99.csv \
+               --output out/fig_lines
+
 # Multi-panel, each panel with its own right-axis line overlay
 python main.py --inputs panel_a.csv panel_b.csv \
                --input_lines line_a.csv line_b.csv \
@@ -119,7 +123,7 @@ Give each CSV a `__caption__` row to label panels `(a)`, `(b)`, `(c)` …
 
 ---
 
-## Right-axis Line Overlay (`--input_line`)
+## Right-axis Line Overlays
 
 Supply a second CSV whose group/label structure mirrors the primary CSV.  Its numeric column is plotted as a line chart on a **right y-axis** aligned to the same group centers.
 
@@ -132,6 +136,15 @@ python main.py \
 
 The right axis uses the same tick-count target (`--y_ticks`) as the left axis and is independently scaled to maximise the line variation.
 
+Use `--input_lines` with a single `--input` to place multiple line datasets on
+the same right axis. Their numeric columns must use the same axis label; text in
+parentheses identifies each series in the legend.
+
+```bash
+python main.py --input bars.csv --input_lines p95.csv p99.csv \
+               --output out/fig_lines
+```
+
 ---
 
 ## CLI Options (Ablation)
@@ -143,7 +156,7 @@ The right axis uses the same tick-count target (`--y_ticks`) as the left axis an
 | `--input CSV` | Single-panel CSV. Mutually exclusive with `--inputs`. |
 | `--inputs CSV …` | One CSV per panel; panels stacked vertically. Mutually exclusive with `--input`. |
 | `--input_line CSV` | Secondary CSV for a right-axis line overlay on the single panel. |
-| `--input_lines CSV …` | One line-chart CSV per panel (matches order of `--inputs`). Use `''` as a placeholder to skip a specific panel's line. |
+| `--input_lines CSV …` | With `--input`, multiple lines on one right axis. With `--inputs`, one line CSV per panel; use `''` to skip a panel. |
 | `--output PATH` | Output base path without extension. Both `.pdf` and `.png` are written by default. |
 | `--formats fmt …` | Override output formats: any of `pdf png svg eps`. Default: `pdf png`. |
 
@@ -200,7 +213,7 @@ When some labels span two lines and others span one, the one-line labels are **v
 | Max width ≤ 240 pt (single column) | `--width_pt 240` (default) |
 | Font size ≥ 7 pt | CLI validation; `rcParams` sets Times New Roman (DejaVu Serif as fallback) |
 | 1 pt border on all four sides | All spines at 1 pt weight; equal padding on every edge |
-| Tick marks outward | Left and bottom only; right side is tick-free unless `--input_line` is used |
+| Tick marks outward | Left and bottom only; right side is tick-free unless a line overlay is used |
 
 ---
 
