@@ -44,8 +44,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Optional path to a secondary CSV for a line chart on "
                         "the right y-axis.  Same group/label structure as --input.")
     p.add_argument("--input_lines", nargs="+", default=[], metavar="CSV",
-                   help="One line-chart CSV per panel (matches order of --inputs). "
-                        "Use '' as a placeholder to skip the line for a specific panel.")
+                   help="With --input, one or more line-chart CSVs on the shared "
+                        "right axis. With --inputs, one CSV per panel; use '' to "
+                        "skip a panel.")
     p.add_argument("--output", default="out/figure", metavar="BASEPATH",
                    help="Output base path without extension (e.g. out/fig1).")
     p.add_argument("--formats", nargs="+", default=["pdf", "png"],
@@ -243,7 +244,12 @@ def main(argv: list[str] | None = None) -> int:
             renderer.render_panels(datasets, line_datasets=line_datasets)
         else:
             data = read_csv(config.input)
-            renderer.render(data)
+            if args.input_lines:
+                if args.input_line:
+                    parser.error("use either --input_line or --input_lines, not both")
+                renderer.render_with_lines(data, [read_csv(path) for path in args.input_lines])
+            else:
+                renderer.render(data)
 
     elif config.mode == "decomp":
         renderer = DecompRenderer(config)
